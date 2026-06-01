@@ -1,6 +1,6 @@
 # BÁO CÁO PHÁT TRIỂN TOÀN DIỆN
 ## Dự Án Game Boss Fight 2D Platformer - C + Raylib
-### Phiên bản hiện đại nhất: hệ Boom Node, cú lừa giả chết, đi ra cửa & hồi sinh (đối chiếu source thực tế)
+### Phiên bản hiện đại nhất: hệ Boom Node, cú lừa giả chết, đi ra cửa & hồi sinh — Tái cấu trúc Skill Module (đối chiếu source thực tế)
 
 > Tài liệu viết theo phong cách MD2FILE để dễ preview, export PDF/HTML/Markdown. Dùng Markdown, bảng, checklist, code block, Mermaid flowchart, có chèn screenshot.
 >
@@ -105,6 +105,7 @@ Bản cập nhật này thay đổi **cốt lõi** cách đánh boss và toàn b
 - [x] **Đi-bộ-only** áp dụng cho cả pre-intro **và** giai đoạn đi ra cửa: cấm nhảy + cấm đánh chuột.
 - [x] **Camera zoom out** (≈0.95) khi vào fight để thấy cả 3 cục boom + cửa thoát.
 - [x] `BOSS_MAX_HP = 75`.
+- [x] **Tái cấu trúc Skill Module (Skill Refactor):** Toàn bộ logic kỹ năng boss (laser, slam, claw, hazard, rain, projectile_attack) đã được tách ra khỏi `boss.c` vào thư mục `boss/src/skill/`. Header chung `skill.h` định nghĩa constants, structs và prototype. `boss.c` giờ chỉ giữ state machine — giảm ~500 dòng, từ ~1.9k xuống ~1.4k dòng.
 
 > Tóm lại: boss fight không còn là "chém cho hết máu" mà là **giải đố hành động** (phá boom bằng orb parry, né ring orb), kết thúc bằng một **cú lừa tường thuật** (giả chết → tưởng thắng → boss hồi sinh) rồi mới tới màn kết liễu thật. Nhịp độ trận đấu được cân bằng tinh tế thông qua hệ thống cast chiêu theo đợt 5 lần và cơ chế khóa hướng laser thông minh.
 
@@ -143,7 +144,7 @@ Bản cập nhật này thay đổi **cốt lõi** cách đánh boss và toàn b
 
 ```txt
 (root)
-├── Makefile                      ← build theforest.exe (gồm boss/src/*.o)
+├── Makefile                      ← build theforest.exe (gồm boss/src/*.o + boss/src/skill/*.o)
 ├── src/
 │   ├── main.c                    ← game loop, map render, va chạm tổng, cutscene cửa thoát
 │   ├── camera.c / camera.h       ← camera smooth-damped + shake
@@ -168,7 +169,15 @@ Bản cập nhật này thay đổi **cốt lõi** cách đánh boss và toàn b
         ├── orb.c / orb.h         ← orb vàng để parry phá boom
         ├── projectile.c / .h     ← projectile (dùng cho barrage/rain ở TRUE_ENRAGE)
         ├── boss_assets.h         ← GetBossAssetPath
-        └── cute_tiled.h
+        ├── cute_tiled.h
+        └── skill/                ← [MỚI] Skill Modules — tách khỏi boss.c
+            ├── skill.h           ← Header chung: constants, typedefs, prototypes
+            ├── projectile_attack.c  ← DoProjectileAttack, DoBarrageAttack
+            ├── claw.c            ← StartClaw, UpdateClaw, DrawClaw, CheckPlayerInClawZone
+            ├── hazard.c          ← StartHazard, UpdateHazard, DrawHazard
+            ├── laser.c           ← StartLaser, UpdateLaser, DrawLaser, CheckPlayerInLaser
+            ├── rain.c            ← StartRain, UpdateRain, DrawRain
+            └── slam.c            ← StartSlam, UpdateSlam, DrawSlam, CheckPlayerInShockwave
 ```
 
 ### 3.2. Trách nhiệm module & Chi tiết API (Bản Mới Nhất)
@@ -178,7 +187,8 @@ Dưới đây là bảng phân tích chi tiết cấu trúc, chức năng, các 
 | Module / File | Vai trò kỹ thuật | Các hàm API cốt lõi | Chức năng chi tiết & Cơ chế xử lý |
 | --- | --- | --- | --- |
 | **`boss/src/boom.c`** | Quản lý hệ thống Boom Node và các kỹ năng liên quan đến Boom. | <ul><li>`BoomSpawnPhase()`</li><li>`UpdateBooms()`</li><li>`DrawBooms()`</li><li>`BoomNearestActive()`</li><li>`BoomHit()`</li><li>`CheckPlayerInBoomRings()`</li><li>`BoomTriggerChaoticLasers()`</li><li>`BoomTriggerTripleTrackLasers()`</li></ul> | <ul><li>Khởi tạo 3 cục boom cho mỗi phase với tọa độ giãn cách động theo công thức.</li><li>Cập nhật animation, tính toán thời gian cảnh báo (telegraph) và phát hỏa (fire) cho laser tự động trên 2 cục biên (index 0, 2) và đạn đỏ trên cục giữa (index 1).</li><li>Xử lý va chạm giữa vòng đạn đỏ (RingOrb) hoặc tia laser với player.</li><li>Hỗ trợ kích hoạt các kỹ năng tối thượng liên quan đến boom như Chaotic Lasers hoặc Triple Tracking Lasers.</li></ul> |
-| **`boss/src/boss.c`** <br> **`boss/src/boss.h`** | Quản lý vòng đời Boss, State Machine chính, các kỹ năng tự động từ tay Boss và chuỗi cutscene. | <ul><li>`InitBoss()`</li><li>`UpdateBoss()`</li><li>`DrawBoss()`</li><li>`BossTakeDamage()`</li></ul> | <ul><li>Định nghĩa cấu trúc dữ liệu `Boss` lớn chứa toàn bộ cờ trạng thái game, timers và trạng thái kỹ năng của boss.</li><li>Vận hành State Machine 8 trạng thái (từ `PRE_INTRO` đến `DEFEATED`).</li><li>Sử dụng `ChooseNewRoundAttack()` để điều phối chuỗi cast chiêu lớn liên tục 5 lần mỗi đợt.</li><li>Kiểm tra va chạm các chiêu từ boss (Claw, Slam, Hazard, Laser, Rain, Barrage).</li><li>Điều khiển cutscene giả chết (`FAKE_DEATH`), hồi sinh (`TRUE_ENRAGE`), và hiệu ứng chìm/nổ khi chết thật (`DYING`).</li></ul> |
+| **`boss/src/boss.c`** <br> **`boss/src/boss.h`** | Quản lý vòng đời Boss, State Machine chính và chuỗi cutscene. Logic kỹ năng tự động đã được **tách sang `skill/`**. | <ul><li>`InitBoss()`</li><li>`UpdateBoss()`</li><li>`DrawBoss()`</li><li>`BossTakeDamage()`</li><li>`BossGetGroundY()`</li></ul> | <ul><li>Định nghĩa cấu trúc dữ liệu `Boss` lớn chứa toàn bộ cờ trạng thái game, timers và trạng thái kỹ năng của boss.</li><li>Vận hành State Machine 8 trạng thái (từ `PRE_INTRO` đến `DEFEATED`).</li><li>Sử dụng `ChooseNewRoundAttack()` để điều phối chuỗi cast chiêu lớn liên tục 5 lần mỗi đợt.</li><li>Ủy quyền mọi update/draw kỹ năng sang các module `skill/*.c` tương ứng.</li><li>Điều khiển cutscene giả chết (`FAKE_DEATH`), hồi sinh (`TRUE_ENRAGE`), và hiệu ứng chìm/nổ khi chết thật (`DYING`).</li></ul> |
+| **`boss/src/skill/skill.h`** <br> **`boss/src/skill/*.c`** | **[MỚI]** Các module kỹ năng độc lập được tách từ `boss.c` để giảm độ phức tạp. | <ul><li>`StartLaserAttack()` / `UpdateLaserAttack()` / `DrawLaserAttack()`</li><li>`StartSlamAttack()` / `UpdateSlamAttack()` / `DrawSlamAttack()`</li><li>`StartClawAttack()` / `UpdateClawAttack()` / `DrawClawAttack()`</li><li>`StartHazardAttack()` / `UpdateHazardAttack()`</li><li>`StartRainAttack()` / `UpdateRainAttack()` / `DrawRainAttack()`</li><li>`DoProjectileAttack()` / `DoBarrageAttack()`</li><li>`CheckPlayerInLaser()` / `CheckPlayerInShockwave()` / `CheckPlayerInClawZone()`</li></ul> | <ul><li>`skill.h`: định nghĩa tập trung các hằng số (`LASER_CHARGE_TIME`, `SLAM_WARNING_TIME`, `CLAW_DURATION`, v.v.), các offset tay boss, và toàn bộ prototype hàm.</li><li>Mỗi file `.c` nhận con trỏ `Boss*` và các tham số cần thiết, hành động trực tiếp lên struct — không lưu state cục bộ riêng.</li><li>`laser.c`: Thuật toán lock hướng sau pha telegraph; Render body/head sprite chia 2 phần; Fade out 0.5s cuối.</li><li>`slam.c`: Raymarching tìm groundY + shockwave expanding ring; CheckPlayerInShockwave (ring hitbox).</li><li>`claw.c`: Zone-based (LEFT/MIDDLE/RIGHT); blink warning + splash texture 9 frame.</li><li>`hazard.c`: Sinh spike ngẫu nhiên + flash warning theo độ khó phase.</li><li>`rain.c`: Orbital rain orb từ đỉnh màn hình + warning overlay pulse.</li></ul> |
 | **`boss/src/boss_player.c`** | Quản lý Player trong chế độ tích hợp (Integrated) ở Main game. | <ul><li>`InitPlayer()`</li><li>`UpdateBossPlayerOnMap()`</li><li>`DrawBossPlayer()`</li></ul> | <ul><li>Điều khiển di chuyển của Player mèo.</li><li>Áp dụng trạng thái **đi-bộ-only** (`gPreIntroSlowWalk`), cấm nhảy và cấm tấn công trong các pha cutscene giới thiệu và đi ra cửa thoát.</li><li>Tích hợp bộ đệm nhận diện cheat code `NINELIVES` để kích hoạt God Mode.</li></ul> |
 | **`boss/src/orb.c`** <br> **`boss/src/orb.h`** | Quản lý các hạt Orb vàng dùng để parry phá boom hoặc gây sát thương lên boss. | <ul><li>`SpawnParryOrb()`</li><li>`UpdateOrbs()`</li><li>`DrawOrbs()`</li><li>`TryCatchOrb()`</li></ul> | <ul><li>Spawn hạt orb vàng tại vị trí tay của boss.</li><li>Mô phỏng vật lý rơi tự do (`gravity`) của orb cho đến khi chạm đất.</li><li>Khi player tiếp cận và chạm vào orb, chuyển trạng thái sang `RETURNING`, tính toán vector vận tốc hút (magnetic velocity) bay thẳng về phía cục boom gần nhất (hoặc boss trong True Enrage).</li></ul> |
 | **`boss/src/projectile.c`** | Quản lý đạn đỏ (projectile) dạng viên từ boss. | <ul><li>`SpawnProjectile()`</li><li>`UpdateProjectiles()`</li><li>`DrawProjectiles()`</li></ul> | <ul><li>Quản lý mảng đạn đỏ được bắn từ tay boss dưới dạng đạn đơn, fan 3 tia, fan 5 tia, mưa đạn (Rain), hoặc bắn tỏa tròn 360 độ (Barrage) trong True Enrage.</li><li>Cập nhật chuyển động thẳng đều của các viên đạn và dọn dẹp khi bay ra ngoài biên màn hình.</li></ul> |
@@ -867,6 +877,7 @@ typedef struct {
 | Bug 15 | Tia laser của boom khóa chết player không cho né tránh | Nặng | Laser liên tục xoay theo hướng player cả trong pha bắn | **ĐÃ SỬA**: dừng cập nhật hướng khi laser đang bắn (`beamFire[i] > 0.0f`), chỉ xoay ở pha telegraph |
 | Bug 16 | Chết tức thì khi chuyển phase (Phase 2 -> 3) | Trung bình | Laser và ring orb từ phase trước còn sót lại gây sát thương bất ngờ | **ĐÃ SỬA**: dọn dẹp và reset toàn bộ laser (`ClearBoomSkill`) và ring orb trong `BoomSpawnPhase()` |
 | Bug 17 | Sai đường dẫn assets cũ | Nhẹ | Các folder `characters` và `characters/sprites/cat` rườm rà | **ĐÃ SỬA**: đổi thành `boss/assets/boss` và `assets/cat`, cập nhật toàn bộ path trong code C và `.tmj` |
+| Bug 18 | Multiple definition khi tách skill module | Trung bình | `CheckPlayerInShockwave`, `CheckPlayerInLaser`, `CheckPlayerInClawZone` vẫn còn trong `boss.c` sau khi tạo `skill/*.c` | **ĐÃ SỬA**: xóa 3 hàm trùng khỏi `boss.c`; chỉ định nghĩa 1 lần duy nhất trong `slam.c`, `laser.c`, `claw.c` tương ứng |
 
 ```mermaid
 flowchart TD
@@ -884,18 +895,21 @@ flowchart TD
 
 ### 19.1. Build (root Makefile → `theforest.exe`)
 
-Build chính nằm ở **root**, link cả `boss/src/*.o` (gồm `boom.c`):
+Build chính nằm ở **root**, link cả `boss/src/*.o` (gồm `boom.c`) và **`boss/src/skill/*.o`** (các module kỹ năng mới):
 
 ```bash
 mingw32-make
 ```
 
-Link mẫu (rút từ output thực tế):
+Link mẫu (rút từ output thực tế sau khi tách skill modules):
 
 ```text
 gcc src/main.o src/game.o src/camera.o src/map.o \
     boss/src/boss.o boss/src/boss_player.o boss/src/projectile.o \
     boss/src/orb.o boss/src/boom.o src/collision.o src/gamestate.o \
+    boss/src/skill/projectile_attack.o boss/src/skill/claw.o \
+    boss/src/skill/hazard.o boss/src/skill/laser.o \
+    boss/src/skill/rain.o boss/src/skill/slam.o \
     -o theforest.exe -Lraylib/lib -lraylib -lopengl32 -lgdi32 -lwinmm
 ```
 
@@ -966,6 +980,7 @@ taskkill /IM theforest.exe /F 2>$null; mingw32-make
 - [x] **Orb vàng có delay 4–7s khi vào phase mới** (không spawn tức thì).
 - [x] **Đồng bộ cửa thoát** `doorX=1080` / trigger `x>=1060` cả 2 bản.
 - [x] **Standalone giữ HUD + update projectile/orb ở TRUE_ENRAGE** (rebuild `bossfight.exe`).
+- [x] **Tái cấu trúc Skill Modules** (`boss/src/skill/`): tách laser/slam/claw/hazard/rain/projectile_attack khỏi `boss.c` thành 6 file riêng + `skill.h`. `boss.c` giảm từ ~1.9k xuống ~1.4k dòng. Cả 2 target `bossfight.exe` và `theforest.exe` build OK.
 
 ### Việc còn nên làm (đề xuất)
 
@@ -986,7 +1001,7 @@ Bản cập nhật này biến boss fight từ "chém cho hết máu" thành **g
 4. **Animation chết** gọn, điện ảnh thay cho hiệu ứng random rối mắt.
 5. **Đi-bộ-only + camera zoom out** giữ nhịp cutscene và cho thấy toàn cảnh sân đấu.
 
-> Báo cáo đã đối chiếu trực tiếp với `boss/src/boom.c`, `boss/src/boss.c|h`, `boss/src/boss_player.c` và `src/main.c` ở trạng thái build `theforest.exe` hiện tại.
+> Báo cáo đã đối chiếu trực tiếp với `boss/src/boom.c`, `boss/src/boss.c|h`, `boss/src/boss_player.c`, `boss/src/skill/*.c` và `src/main.c` ở trạng thái build `theforest.exe` hiện tại.
 
 ---
 
