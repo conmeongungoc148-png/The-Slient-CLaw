@@ -127,21 +127,40 @@ void CameraUpdate(MyCamera *cam, Vector2 targetPos, float deltaTime) {
         float halfW = cam->rl.offset.x / cam->zoom;
         float halfH = cam->rl.offset.y / cam->zoom;
 
-        cam->target.x = Clampf(cam->target.x,
-            cam->bounds.x + halfW,
-            cam->bounds.x + cam->bounds.width  - halfW);
-        cam->target.y = Clampf(cam->target.y,
-            cam->bounds.y + halfH,
-            cam->bounds.y + cam->bounds.height - halfH);
+        float minX = cam->bounds.x + halfW;
+        float maxX = cam->bounds.x + cam->bounds.width - halfW;
+        if (minX > maxX) {
+            cam->target.x = cam->bounds.x + cam->bounds.width / 2.0f;
+        } else {
+            cam->target.x = Clampf(cam->target.x, minX, maxX);
+        }
+
+        float minY = cam->bounds.y + halfH;
+        float maxY = cam->bounds.y + cam->bounds.height - halfH;
+        if (minY > maxY) {
+            cam->target.y = cam->bounds.y + cam->bounds.height / 2.0f;
+        } else {
+            cam->target.y = Clampf(cam->target.y, minY, maxY);
+        }
     }
 
-    // 4. XỬ LÝ SCREEN SHAKE
+    // 4. XỬ LÝ SCREEN SHAKE (MƯỢT - không random giật từng frame)
+    // Dùng dao động sin theo thời gian (đa tần số) + biên độ giảm dần.
+    // Random mỗi frame gây "giật lag" rất khó chịu, nhất là khi zoom out;
+    // sin theo thời gian cho rung liên tục, tự nhiên và êm.
     Vector2 shakeOffset = {0, 0};
     if (cam->shakeTimer > 0) {
         cam->shakeTimer -= deltaTime;
-        float s = cam->shakeMagnitude;
-        shakeOffset.x = ((float)(GetRandomValue(-100, 100)) / 100.0f) * s;
-        shakeOffset.y = ((float)(GetRandomValue(-100, 100)) / 100.0f) * s;
+        if (cam->shakeTimer < 0) cam->shakeTimer = 0;
+        float t = (float)GetTime();
+        // Biên độ giảm dần theo thời gian còn lại của cú shake (ease-out).
+        float decay = cam->shakeTimer;
+        if (decay > 1.0f) decay = 1.0f;          // chuẩn hoá 0..1
+        float s = cam->shakeMagnitude * decay;
+        // Giới hạn biên độ tối đa để không nhảy quá xa (giảm cảm giác lag).
+        if (s > 14.0f) s = 14.0f;
+        shakeOffset.x = (sinf(t * 47.0f) + 0.5f * sinf(t * 23.0f)) * s;
+        shakeOffset.y = (cosf(t * 41.0f) + 0.5f * cosf(t * 19.0f)) * s;
     }
 
     // 5. CẬP NHẬT CAMERA RAYLIB
@@ -194,15 +213,15 @@ void CameraShake(MyCamera *cam, float duration, float magnitude) {
 // World → Screen
 Vector2 CameraToScreen(MyCamera *cam, Vector2 worldPos) {
     return (Vector2){
-        (worldPos.x - cam->rl.target.x) * cam->zoom + cam->rl.offset.x,
-        (worldPos.y - cam->rl.target.y) * cam->zoom + cam->rl.offset.y
+        (worldPos.x - cam->target.x) * cam->zoom + cam->rl.offset.x,
+        (worldPos.y - cam->target.y) * cam->zoom + cam->rl.offset.y
     };
 }
 
 // Screen → World
 Vector2 CameraToWorld(MyCamera *cam, Vector2 screenPos) {
     return (Vector2){
-        (screenPos.x - cam->rl.offset.x) / cam->zoom + cam->rl.target.x,
-        (screenPos.y - cam->rl.offset.y) / cam->zoom + cam->rl.target.y
+        (screenPos.x - cam->rl.offset.x) / cam->zoom + cam->target.x,
+        (screenPos.y - cam->rl.offset.y) / cam->zoom + cam->target.y
     };
 }

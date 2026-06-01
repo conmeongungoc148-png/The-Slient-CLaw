@@ -1,0 +1,19 @@
+Ban lam viec tren ban moi nay:
+
+C:\Users\HugoDo\Desktop\Theforest\Theforest_latest_work_20260522_111214\Theforest-main
+
+Boss folder da duoc chep tu ban hien tai vao:
+
+C:\Users\HugoDo\Desktop\Theforest\Theforest_latest_work_20260522_111214\Theforest-main\boss
+
+Mo map boss bang Tiled:
+
+boss\assets\forest\back1.tmj
+
+Chay game chinh:
+
+theforest.exe
+
+Chay boss standalone:
+
+boss\bossfight.exe

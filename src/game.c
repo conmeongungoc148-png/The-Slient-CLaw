@@ -46,8 +46,8 @@ static void FixTiledPath(char *path) {
     p++;
   }
 
-  // Xóa "../" ở đầu nếu có
-  if (strncmp(path, "../", 3) == 0) {
+  // Xóa "../" ở đầu nếu có (nhiều cấp nếu có, ví dụ ../../)
+  while (strncmp(path, "../", 3) == 0) {
     memmove(path, path + 3, strlen(path + 3) + 1);
   }
 
@@ -60,6 +60,14 @@ static void FixTiledPath(char *path) {
     if (key)
       memmove(path, key + 15, strlen(key + 15) + 1);
   }
+
+  // Prepend assets/ if not already starting with assets/ or asset_sources/
+  if (strncmp(path, "asset_sources/", 14) != 0 && strncmp(path, "assets/", 7) != 0) {
+    char fixed[256];
+    snprintf(fixed, sizeof(fixed), "assets/%s", path);
+    strncpy(path, fixed, 255);
+    path[255] = '\0';
+  }
 }
 
 void LoadPlayerHitbox(float *width, float *height) {
@@ -67,9 +75,10 @@ void LoadPlayerHitbox(float *width, float *height) {
   *width = 40.0f;
   *height = 29.25f;
 
-  cute_tiled_map_t *map = cute_tiled_load_map_from_file("assets/player/playerhurt.tmj", NULL);
+  const char *hitboxPath = "boss/assets/player/playerhurt.tmj";
+  cute_tiled_map_t *map = cute_tiled_load_map_from_file(hitboxPath, NULL);
   if (!map) {
-    TraceLog(LOG_WARNING, "[HITBOX] Failed to load assets/player/playerhurt.tmj, using default fallback.");
+    TraceLog(LOG_WARNING, "[HITBOX] Failed to load %s, using default fallback.", hitboxPath);
     return;
   }
 
@@ -104,12 +113,6 @@ void InitPlayer(Player *player, Vector2 pos) {
   player->frameTimer = 0.0f;
   player->isClimbing = false;
   LoadPlayerHitbox(&player->hitboxWidth, &player->hitboxHeight);
-  
-  // Initialize skills
-  for (int i = 0; i < 10; i++) {
-    player->skills[i].active = false;
-    player->skills[i].frameCount = 0;
-  }
 }
 void UpdatePlayer(Player *player, GameMap *map, float deltaTime) {
   const float gravity = 4000.0f;
@@ -544,9 +547,6 @@ static int CountLayers(cute_tiled_layer_t *layer) {
   return count;
 }
 
-// ProcessLayers: duyệt xuôi theo linked list.
-// cute_tiled đã reverse top-level layers → thứ tự trong linked list
-// đã là đúng thứ tự vẽ bottom-to-top.
 static void ProcessLayers(cute_tiled_layer_t *layer, GameMap *map,
                           int *currentLayerIdx, float parentOffsetX,
                           float parentOffsetY) {
@@ -557,23 +557,26 @@ static void ProcessLayers(cute_tiled_layer_t *layer, GameMap *map,
                     parentOffsetY + layer->offsety);
     } else {
       TMJLayer *tmjLayer = &map->layers[*currentLayerIdx];
-      cute_tiled_layer_t *cur = layer;
-      strncpy(tmjLayer->name, cur->name.ptr ? cur->name.ptr : "", 63);
-      strncpy(tmjLayer->type, cur->type.ptr ? cur->type.ptr : "", 31);
-      tmjLayer->visible = cur->visible;
-      tmjLayer->opacity = cur->opacity;
-      tmjLayer->offsetx = parentOffsetX + cur->offsetx;
-      tmjLayer->offsety = parentOffsetY + cur->offsety;
+      strncpy(tmjLayer->name, layer->name.ptr ? layer->name.ptr : "", 63);
+      strncpy(tmjLayer->type, layer->type.ptr ? layer->type.ptr : "", 31);
+      tmjLayer->visible = layer->visible;
+      tmjLayer->opacity = layer->opacity;
+      tmjLayer->offsetx = parentOffsetX + layer->offsetx;
+      tmjLayer->offsety = parentOffsetY + layer->offsety;
 
       if (strcmp(tmjLayer->type, "objectgroup") == 0) {
+        // Count objects
         int objCount = 0;
-        cute_tiled_object_t *obj = cur->objects;
-        while (obj) { objCount++; obj = obj->next; }
+        cute_tiled_object_t *obj = layer->objects;
+        while (obj) {
+          objCount++;
+          obj = obj->next;
+        }
 
         tmjLayer->objectCount = objCount;
         if (objCount > 0) {
           tmjLayer->objects = (TMJObject *)calloc(objCount, sizeof(TMJObject));
-          obj = cur->objects;
+          obj = layer->objects;
           for (int j = 0; j < objCount && obj; j++) {
             TMJObject *tmjObj = &tmjLayer->objects[j];
             strncpy(tmjObj->name, obj->name.ptr ? obj->name.ptr : "", 63);
@@ -585,9 +588,10 @@ static void ProcessLayers(cute_tiled_layer_t *layer, GameMap *map,
             tmjObj->visible = obj->visible;
             tmjObj->opacity = 1.0f;
 
-            if (obj->vert_count > 0 && obj->vert_type == 1) {
+            if (obj->vert_count > 0 && obj->vert_type == 1) { // 1 is polygon
               tmjObj->polygonCount = obj->vert_count;
-              tmjObj->polygon = (Point *)malloc(obj->vert_count * sizeof(Point));
+              tmjObj->polygon =
+                  (Point *)malloc(obj->vert_count * sizeof(Point));
               for (int k = 0; k < obj->vert_count; k++) {
                 tmjObj->polygon[k].x = obj->vertices[2 * k];
                 tmjObj->polygon[k].y = obj->vertices[2 * k + 1];
@@ -599,10 +603,13 @@ static void ProcessLayers(cute_tiled_layer_t *layer, GameMap *map,
               tmjObj->flipX = (rawGid & CUTE_TILED_FLIPPED_HORIZONTALLY_FLAG);
               tmjObj->flipY = (rawGid & CUTE_TILED_FLIPPED_VERTICALLY_FLAG);
               int gid = cute_tiled_unset_flags(rawGid);
+
+              // Find matching tileset texture
               for (int k = map->tilesetCount - 1; k >= 0; k--) {
                 if (gid >= map->tilesets[k].firstgid) {
-                  if (map->tilesets[k].texture.id != 0)
+                  if (map->tilesets[k].texture.id != 0) {
                     tmjObj->texture = map->tilesets[k].texture;
+                  }
                   break;
                 }
               }
@@ -611,12 +618,13 @@ static void ProcessLayers(cute_tiled_layer_t *layer, GameMap *map,
           }
         }
       } else if (strcmp(tmjLayer->type, "tilelayer") == 0) {
-        tmjLayer->width = cur->width;
-        tmjLayer->height = cur->height;
-        if (cur->data_count > 0) {
-          tmjLayer->data = (int *)malloc(cur->data_count * sizeof(int));
-          for (int j = 0; j < cur->data_count; j++)
-            tmjLayer->data[j] = cur->data[j];
+        tmjLayer->width = layer->width;
+        tmjLayer->height = layer->height;
+        if (layer->data_count > 0) {
+          tmjLayer->data = (int *)malloc(layer->data_count * sizeof(int));
+          for (int j = 0; j < layer->data_count; j++) {
+            tmjLayer->data[j] = layer->data[j];
+          }
         }
       }
       (*currentLayerIdx)++;
@@ -716,136 +724,4 @@ void UnloadMapData(GameMap *map) {
     free(map->layers);
   if (map->tilesets)
     free(map->tilesets);
-}
-
-// --- Skill System ---
-void CastSkill(Player *player, const char *skillFile) {
-  // Find an inactive skill slot
-  for (int i = 0; i < 10; i++) {
-    if (!player->skills[i].active) {
-      Skill *skill = &player->skills[i];
-      
-      // Load skill map temporarily using cute_tiled to parse the TMJ
-      cute_tiled_map_t* tiled_map = cute_tiled_load_map_from_file(skillFile, NULL);
-      if (!tiled_map) {
-        TraceLog(LOG_ERROR, "[SKILL] Failed to load skill file: %s", skillFile);
-        return;
-      }
-      
-      // Find the tileset that contains animation frames
-      cute_tiled_tileset_t* ts = tiled_map->tilesets;
-      while (ts) {
-        // Look for tilesets with tile descriptors (these contain individual frame images)
-        cute_tiled_tile_descriptor_t* tile = ts->tiles;
-        if (tile && tile->image.ptr) {
-          // This is a "collection of images" tileset - load each frame
-          int frame_idx = 0;
-          while (tile && frame_idx < 12) {
-            if (tile->image.ptr && strlen(tile->image.ptr) > 0) {
-              char fullPath[256];
-              strncpy(fullPath, tile->image.ptr, 255);
-              FixTiledPath(fullPath);
-              
-              skill->frames[frame_idx] = GetCachedTexture(fullPath);
-              if (skill->frames[frame_idx].id != 0) {
-                if (frame_idx == 0) {
-                  skill->frameWidth = (float)skill->frames[frame_idx].width;
-                  skill->frameHeight = (float)skill->frames[frame_idx].height;
-                }
-                frame_idx++;
-              }
-            }
-            tile = tile->next;
-          }
-          skill->frameCount = frame_idx;
-          TraceLog(LOG_INFO, "[SKILL] Loaded %d frames from tileset", frame_idx);
-          break;
-        }
-        ts = ts->next;
-      }
-      
-      cute_tiled_free_map(tiled_map);
-      
-      if (skill->frameCount == 0) {
-        TraceLog(LOG_WARNING, "[SKILL] No frames loaded for skill: %s", skillFile);
-        return;
-      }
-      
-      // Initialize skill
-      skill->active = true;
-      skill->currentFrame = 0;
-      skill->frameTimer = 0.0f;
-      skill->lifetime = 1.5f;
-      skill->facingRight = player->facingRight;
-      
-      // Position skill
-      float offsetX = player->facingRight ? 100.0f : -100.0f;
-      skill->position = (Vector2){player->position.x + offsetX, player->position.y};
-      
-      TraceLog(LOG_INFO, "[SKILL] Cast skill with %d frames at (%.2f, %.2f)", 
-               skill->frameCount, skill->position.x, skill->position.y);
-      break;
-    }
-  }
-}
-
-void UpdateSkills(Player *player, float deltaTime) {
-  for (int i = 0; i < 10; i++) {
-    if (player->skills[i].active) {
-      Skill *skill = &player->skills[i];
-      
-      // Move skill forward
-      float moveSpeed = 400.0f; // pixels per second
-      float direction = skill->facingRight ? 1.0f : -1.0f;
-      skill->position.x += moveSpeed * direction * deltaTime;
-      
-      skill->lifetime -= deltaTime;
-      skill->frameTimer += deltaTime;
-      
-      // Update animation frame (50ms per frame for smooth animation)
-      if (skill->frameTimer >= 0.05f) {
-        skill->frameTimer = 0.0f;
-        skill->currentFrame++;
-      }
-      
-      // Deactivate if lifetime expired
-      if (skill->lifetime <= 0.0f) {
-        skill->active = false;
-        // DON'T unload map to avoid cache issues - just mark inactive
-        // Memory will be reused when casting new skill
-      }
-    }
-  }
-}
-
-void DrawSkills(Player *player) {
-  for (int i = 0; i < 10; i++) {
-    if (player->skills[i].active && player->skills[i].frameCount > 0) {
-      Skill *skill = &player->skills[i];
-      
-      // Get current animation frame
-      int frameIdx = skill->currentFrame % skill->frameCount;
-      Texture2D currentFrame = skill->frames[frameIdx];
-      
-      if (currentFrame.id != 0) {
-        Rectangle source = {0, 0, (float)currentFrame.width, (float)currentFrame.height};
-        
-        // Flip if facing left
-        if (!skill->facingRight) {
-          source.width = -source.width;
-        }
-        
-        Rectangle dest = {
-          skill->position.x,
-          skill->position.y + 64.0f,
-          skill->frameWidth,
-          skill->frameHeight
-        };
-        
-        Vector2 origin = {skill->frameWidth / 2.0f, skill->frameHeight / 2.0f};
-        
-        DrawTexturePro(currentFrame, source, dest, origin, 0.0f, WHITE);
-      }
-    }
-  }
 }

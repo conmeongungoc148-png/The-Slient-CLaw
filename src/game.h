@@ -47,20 +47,6 @@ typedef struct {
     int tilesetCount;
 } GameMap;
 
-// --- Skill Structure ---
-typedef struct {
-    Vector2 position;
-    bool active;
-    int currentFrame;
-    float frameTimer;
-    float lifetime;
-    bool facingRight;
-    Texture2D frames[12]; // Store individual animation frames
-    int frameCount;
-    float frameWidth;
-    float frameHeight;
-} Skill;
-
 // --- Player Structure ---
 typedef struct {
     Vector2 position;
@@ -80,7 +66,6 @@ typedef struct {
     bool isClimbing;   // Trạng thái trèo thang
     float hitboxWidth;
     float hitboxHeight;
-    Skill skills[10];  // Max 10 active skills
 } Player;
 
 // --- API ---
@@ -92,10 +77,5 @@ void InitPlayer(Player *player, Vector2 pos);
 void LoadPlayerHitbox(float *width, float *height);
 void UpdatePlayer(Player *player, GameMap *map, float deltaTime);
 void DrawPlayer(Player *player, Texture2D idle, Texture2D walk, Texture2D run, Texture2D jump, Texture2D attack, Texture2D runJump, Texture2D hurt, int frameW, int frameH, float scale);
-
-// --- Skill API ---
-void CastSkill(Player *player, const char *skillFile);
-void UpdateSkills(Player *player, float deltaTime);
-void DrawSkills(Player *player);
 
 #endif

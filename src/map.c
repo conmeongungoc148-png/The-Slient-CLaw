@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <ctype.h>
 
 // --- Texture Cache cho Bản đồ ---
 #define MAX_MAP_CACHE 128
@@ -36,14 +37,25 @@ static void ClearMapCache() {
 // --- Helpers ---
 void MapFixPath(char* path) {
     char* p = path;
-    // Chuyển \/ thành /
     while ((p = strstr(p, "\\/"))) {
         memmove(p, p + 1, strlen(p));
     }
-    // Lấy phần sau "Theforest/" nếu có
-    char* key = strstr(path, "Theforest/");
-    if (key) {
-        memmove(path, key + 10, strlen(key + 10) + 1);
+
+    for (p = path; *p; p++) {
+        if (*p == '\\') *p = '/';
+    }
+
+    while (strncmp(path, "../", 3) == 0) {
+        memmove(path, path + 3, strlen(path + 3) + 1);
+    }
+
+    if (strncmp(path, "asset_sources/", 14) == 0) {
+        return;
+    } else if (strncmp(path, "assets/", 7) != 0) {
+        char fixed[256];
+        snprintf(fixed, sizeof(fixed), "assets/%s", path);
+        strncpy(path, fixed, 255);
+        path[255] = '\0';
     }
 }
 
@@ -73,6 +85,10 @@ void MapUnload(cute_tiled_map_t* map) {
 }
 
 void MapDrawLayer(cute_tiled_map_t* map, const char* layerName, float offsetX, Texture2D defaultTileset) {
+    MapDrawLayerEx(map, layerName, offsetX, 0.0f, defaultTileset);
+}
+
+void MapDrawLayerEx(cute_tiled_map_t* map, const char* layerName, float offsetX, float offsetY, Texture2D defaultTileset) {
     if (!map) return;
     cute_tiled_layer_t* layer = map->layers;
     while (layer) {
@@ -103,7 +119,7 @@ void MapDrawLayer(cute_tiled_map_t* map, const char* layerName, float offsetX, T
                     Rectangle source = { (float)(tileId % tsCols) * tw, (float)(tileId / tsCols) * th, (float)tw, (float)th };
                     int x = i % layer->width;
                     int y = i / layer->width;
-                    Vector2 pos = { (float)x * map->tilewidth + offsetX, (float)y * map->tileheight };
+                    Vector2 pos = { (float)x * map->tilewidth + offsetX, (float)y * map->tileheight + offsetY };
                     
                     DrawTextureRec(currentTex, source, pos, Fade(WHITE, layer->opacity));
                 }
@@ -127,7 +143,7 @@ void MapDrawLayer(cute_tiled_map_t* map, const char* layerName, float offsetX, T
                                     if (tex.id != 0) {
                                         Rectangle source = { 0, 0, (float)tex.width, (float)tex.height };
                                         if (rawGid & CUTE_TILED_FLIPPED_HORIZONTALLY_FLAG) source.width = -source.width;
-                                        Rectangle dest = { obj->x + offsetX, obj->y, (float)obj->width, (float)obj->height };
+                                        Rectangle dest = { obj->x + offsetX, obj->y + offsetY, (float)obj->width, (float)obj->height };
                                         DrawTexturePro(tex, source, dest, (Vector2){0, (float)obj->height}, obj->rotation, Fade(WHITE, layer->opacity));
                                     }
                                     break;
@@ -155,4 +171,85 @@ float MapGetGroundY(cute_tiled_map_t* map) {
         l = l->next;
     }
     return 642.0f; // Default fallback
+}
+
+static bool TextContainsNoCase(const char* haystack, const char* needle) {
+    if (!haystack || !needle || !*needle) return false;
+    size_t needleLen = strlen(needle);
+    for (const char* h = haystack; *h; h++) {
+        size_t i = 0;
+        while (i < needleLen && h[i] &&
+               tolower((unsigned char)h[i]) == tolower((unsigned char)needle[i])) {
+            i++;
+        }
+        if (i == needleLen) return true;
+    }
+    return false;
+}
+
+float MapGetFloorYAtX(cute_tiled_map_t* map, float worldX, float currentY, float nextY, float offsetY, float fallbackY) {
+    if (!map) return fallbackY;
+
+    float bestY = fallbackY;
+    cute_tiled_layer_t* layer = map->layers;
+    while (layer) {
+        bool isGroundLayer = TextContainsNoCase(layer->name.ptr, "ground") ||
+                             TextContainsNoCase(layer->name.ptr, "solid") ||
+                             TextContainsNoCase(layer->name.ptr, "soild") ||
+                             TextContainsNoCase(layer->name.ptr, "platform");
+        if (layer->visible && layer->type.ptr && strcmp(layer->type.ptr, "objectgroup") == 0 && isGroundLayer) {
+            cute_tiled_object_t* obj = layer->objects;
+            while (obj) {
+                float left = obj->x + layer->offsetx;
+                float right = left + obj->width;
+                float top = obj->y + layer->offsety + offsetY;
+
+                if (worldX >= left && worldX <= right &&
+                    currentY <= top + 8.0f && nextY >= top - 2.0f &&
+                    top < bestY) {
+                    bestY = top;
+                }
+                obj = obj->next;
+            }
+        }
+        layer = layer->next;
+    }
+
+    return bestY;
+}
+
+bool MapFindObject(cute_tiled_map_t* map, const char* nameNeedle, Vector2* outPosition, Rectangle* outRect) {
+    if (!map || !nameNeedle) return false;
+
+    cute_tiled_layer_t* layer = map->layers;
+    while (layer) {
+        if (layer->type.ptr && strcmp(layer->type.ptr, "objectgroup") == 0) {
+            cute_tiled_object_t* obj = layer->objects;
+            while (obj) {
+                const char* objName = obj->name.ptr ? obj->name.ptr : "";
+                const char* objType = obj->type.ptr ? obj->type.ptr : "";
+                const char* layerName = layer->name.ptr ? layer->name.ptr : "";
+                if (TextContainsNoCase(objName, nameNeedle) ||
+                    TextContainsNoCase(objType, nameNeedle) ||
+                    (TextContainsNoCase(layerName, nameNeedle) && obj->gid == 0)) {
+                    if (outPosition) {
+                        outPosition->x = obj->x + layer->offsetx;
+                        outPosition->y = obj->y + layer->offsety;
+                    }
+                    if (outRect) {
+                        *outRect = (Rectangle){
+                            obj->x + layer->offsetx,
+                            obj->y + layer->offsety,
+                            obj->width,
+                            obj->height
+                        };
+                    }
+                    return true;
+                }
+                obj = obj->next;
+            }
+        }
+        layer = layer->next;
+    }
+    return false;
 }
