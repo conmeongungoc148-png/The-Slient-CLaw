@@ -223,6 +223,50 @@ void UnloadBoomAssets(void);
 void BoomTriggerChaoticLasers(Boss *boss);
 void BoomTriggerTripleTrackLasers(Boss *boss);
 
+// Shared Texture Getters
+Texture2D GetBossExplosionTex(void);
+Texture2D GetBossLaserTex(void);
+Texture2D GetBossSplashTex(int index);
+Texture2D GetBossStatueTex(int index);
+
+// Hand offsets for skills
+#define LEFT_HAND_OFFSET_X (-100.0f)
+#define LEFT_HAND_OFFSET_Y (50.0f)
+#define RIGHT_HAND_OFFSET_X (100.0f)
+#define RIGHT_HAND_OFFSET_Y (50.0f)
+
+// Projectile Attacks
+void DoProjectileAttack(Boss *boss, Vector2 playerPos, ProjectileManager *pm);
+void DoBarrageAttack(Boss *boss, ProjectileManager *pm);
+
+// Claw Attack
+void StartClawAttack(Boss *boss, Vector2 playerPos);
+void UpdateClawAttack(Boss *boss, float dt);
+void DrawClawAttack(Boss *boss);
+bool CheckPlayerInClawZone(Vector2 playerPos, ClawZone zone);
+
+// Laser Attack
+void StartLaserAttack(Boss *boss, Vector2 playerPos);
+void UpdateLaserAttack(Boss *boss, Vector2 playerPos, float dt);
+void DrawLaserAttack(Boss *boss);
+bool CheckPlayerInLaser(Vector2 playerPos, Vector2 laserStart, Vector2 laserEnd, float width);
+
+// Slam Attack
+void StartSlamAttack(Boss *boss, Vector2 playerPos);
+void UpdateSlamAttack(Boss *boss, float dt);
+void DrawSlamAttack(Boss *boss);
+bool CheckPlayerInShockwave(Vector2 playerPos, Vector2 slamPos, float radius);
+
+// Hazard Attack
+void StartHazardAttack(Boss *boss);
+void UpdateHazardAttack(Boss *boss, float dt);
+void DrawHazardAttack(Boss *boss);
+
+// Rain Attack
+void StartRainAttack(Boss *boss);
+void UpdateRainAttack(Boss *boss, ProjectileManager *pm, float dt);
+void DrawRainAttack(Boss *boss);
+
 void InitBoss(Boss *boss, Vector2 startPos, Vector2 targetPos);
 void BossSetArenaMap(cute_tiled_map_t *map, float offsetY, float fallbackGroundY);
 void UpdateBoss(Boss *boss, Vector2 playerPos, ProjectileManager *pm, OrbManager *om, float dt, float *cameraShake);
@@ -232,9 +276,6 @@ void DrawBossSkills(Boss *boss);
 void BossTakeDamage(Boss *boss, int damage);
 void BossCheckStatueHits(Boss *boss, Rectangle attackBox, Sound hitSfx, Sound shatterSfx, OrbManager *om);
 void BossResolveStatueCollision(Boss *boss, Vector2 *position, float halfWidth, float bodyHeight);
-bool CheckPlayerInShockwave(Vector2 playerPos, Vector2 slamPos, float radius);
-bool CheckPlayerInLaser(Vector2 playerPos, Vector2 laserStart, Vector2 laserEnd, float width);
-bool CheckPlayerInClawZone(Vector2 playerPos, ClawZone zone);
 float BossGetGroundY(float x);
 void UnloadBossAssets(void);
 

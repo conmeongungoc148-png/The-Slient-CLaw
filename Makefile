@@ -7,7 +7,9 @@ LDFLAGS = -Lraylib/lib -lraylib -lopengl32 -lgdi32 -lwinmm
 # Tệp nguồn chính
 SRC = src/main.c src/game.c src/camera.c src/map.c \
       boss/src/boss.c boss/src/boss_player.c boss/src/projectile.c \
-      boss/src/orb.c boss/src/boom.c src/collision.c src/gamestate.c
+      boss/src/orb.c boss/src/boom.c src/collision.c src/gamestate.c \
+      boss/src/skill/claw.c boss/src/skill/laser.c boss/src/skill/slam.c \
+      boss/src/skill/hazard.c boss/src/skill/rain.c boss/src/skill/projectile_attack.c
 OBJ = $(SRC:.c=.o)
 EXE = theforest.exe
 
@@ -15,14 +17,14 @@ EXE = theforest.exe
 ifeq ($(OS),Windows_NT)
     ifeq ($(findstring sh,$(SHELL)),sh)
         RM = rm -f
-        RM_FILES = src/*.o boss/src/*.o $(EXE)
+        RM_FILES = src/*.o boss/src/*.o boss/src/skill/*.o $(EXE)
     else
         RM = del /f /q
-        RM_FILES = src\*.o boss\src\*.o $(EXE)
+        RM_FILES = src\*.o boss\src\*.o boss\src\skill\*.o $(EXE)
     endif
 else
     RM = rm -f
-    RM_FILES = src/*.o boss/src/*.o $(EXE)
+    RM_FILES = src/*.o boss/src/*.o boss/src/skill/*.o $(EXE)
 endif
 
 all: $(EXE)
