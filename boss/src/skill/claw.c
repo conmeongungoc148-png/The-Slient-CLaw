@@ -1,9 +1,6 @@
-#include "../boss.h"
-#include <stdlib.h>
+#include "skill.h"
 #include <math.h>
-
-#define CLAW_WARNING_TIME 0.8f
-#define CLAW_DURATION 0.6f
+#include <stdlib.h>
 
 void StartClawAttack(Boss *boss, Vector2 playerPos) {
     boss->clawActive = true;
@@ -42,7 +39,7 @@ void UpdateClawAttack(Boss *boss, float dt) {
     }
 }
 
-void DrawClawAttack(Boss *boss) {
+void DrawClawAttack(Boss *boss, Texture2D *splashTexs) {
     if (boss->clawActive) {
         // Xác định vùng X theo zone
         float zoneX = 20.0f, zoneW = 420.0f;
@@ -71,7 +68,7 @@ void DrawClawAttack(Boss *boss) {
             if (frameIdx < 0) frameIdx = 0;
             if (frameIdx > 8) frameIdx = 8;
             
-            Texture2D tex = GetBossSplashTex(frameIdx);
+            Texture2D tex = splashTexs[frameIdx];
             if (tex.id > 0) {
                 Rectangle source = { 0.0f, 0.0f, (float)tex.width, (float)tex.height };
                 Rectangle dest = { zoneX, 720.0f, 720.0f, zoneW };

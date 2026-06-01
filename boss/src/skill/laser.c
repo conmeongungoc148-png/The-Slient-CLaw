@@ -1,14 +1,5 @@
-#include "../boss.h"
+#include "skill.h"
 #include <math.h>
-
-#define LASER_CHARGE_TIME 2.0f   // 2s cảnh báo nhấp nháy
-#define LASER_DURATION 2.0f      // Max duration (thường tắt sớm khi chạm mép)
-#define LASER_EXTEND_SPEED 300.0f // Tốc độ laser kéo dài từ lockPos theo direction
-
-#define LASER_FRAMES 8
-#define LASER_COLS 4
-#define LASER_FW 300
-#define LASER_FH 1309
 
 void StartLaserAttack(Boss *boss, Vector2 playerPos) {
     boss->laserActive = true;
@@ -22,7 +13,7 @@ void StartLaserAttack(Boss *boss, Vector2 playerPos) {
 
 void UpdateLaserAttack(Boss *boss, Vector2 playerPos, float dt) {
     if (boss->laserActive) {
-        // Gốc luôn là vị trí boss
+        // Gốc 1 luôn là vị trí boss
         boss->laserStart = boss->position;
 
         if (boss->laserChargeTime > 0) {
@@ -71,7 +62,7 @@ void UpdateLaserAttack(Boss *boss, Vector2 playerPos, float dt) {
     }
 }
 
-void DrawLaserAttack(Boss *boss) {
+void DrawLaserAttack(Boss *boss, Texture2D laserTex) {
     if (boss->laserActive) {
         if (boss->laserChargeTime > 0) {
             // Charging: thin red line blinking
@@ -81,7 +72,6 @@ void DrawLaserAttack(Boss *boss) {
             // Warning circle at end
             DrawCircleV(boss->laserEnd, 20.0f, (Color){255, 0, 0, (unsigned char)(alpha * 100)});
         } else {
-            Texture2D laserTex = GetBossLaserTex();
             // Firing: Draw animated laser texture
             if (laserTex.id > 0) {
                 Vector2 diff = { boss->laserEnd.x - boss->laserStart.x, boss->laserEnd.y - boss->laserStart.y };
@@ -103,7 +93,6 @@ void DrawLaserAttack(Boss *boss) {
                 float drawLength = length + extraLength;
                 
                 // Keep the laser head (bottom part of spritesheet frame) unstretched:
-                // Native dimensions of the head are square: width 300, height 300.
                 float scale = thickness / (float)LASER_FW; 
                 float headSourceHeight = 300.0f; 
                 float headLength = headSourceHeight * scale; // Maintains aspect ratio (80.0f pixels)

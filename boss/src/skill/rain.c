@@ -1,4 +1,4 @@
-#include "../boss.h"
+#include "skill.h"
 #include <stdlib.h>
 #include <math.h>
 

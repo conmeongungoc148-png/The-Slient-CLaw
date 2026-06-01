@@ -1,8 +1,5 @@
-#include "../boss.h"
+#include "skill.h"
 #include <math.h>
-
-#define SLAM_WARNING_TIME 2.0f   // Tăng từ 1.2 → 2.0 cho player thời gian phản ứng
-#define SLAM_DURATION 1.0f
 
 void StartSlamAttack(Boss *boss, Vector2 playerPos) {
     boss->slamActive = true;

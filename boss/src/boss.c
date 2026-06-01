@@ -2,6 +2,7 @@
 #include "collision.h"
 #include "map.h"
 #include "boss_assets.h"
+#include "skill/skill.h"
 #include <math.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -83,37 +84,11 @@ void UnloadBossAssets(void) {
     }
 }
 
-Texture2D GetBossExplosionTex(void) { return explosionTex; }
-Texture2D GetBossLaserTex(void) { return laserTex; }
-Texture2D GetBossSplashTex(int index) {
-    if (index >= 0 && index < 9) return splashTexs[index];
-    return (Texture2D){0};
-}
-Texture2D GetBossStatueTex(int index) {
-    if (index >= 0 && index < 3) return statueTex[index];
-    return (Texture2D){0};
-}
-
-#define PROJECTILE_SPEED_BASE 250.0f
 #define INTRO_DURATION 15.5f
 #define ROAR_DURATION 2.0f
-#define LASER_CHARGE_TIME 2.0f   // 2s cảnh báo nhấp nháy
-#define LASER_DURATION 2.0f      // Max duration (thường tắt sớm khi chạm mép)
-#define LASER_EXTEND_SPEED 300.0f // Tốc độ laser kéo dài từ lockPos theo direction
 #define LASER_MIN_PLAYER_X 200.0f // Player phải ở trong vùng này mới ra laser
 #define LASER_MAX_PLAYER_X 1080.0f
-#define SLAM_WARNING_TIME 2.0f   // Tăng từ 1.2 → 2.0 cho player thời gian phản ứng
-#define SLAM_DURATION 1.0f
-#define HAZARD_WARNING_TIME 2.5f
 #define ORB_CHARGE_TIME 1.5f
-#define CLAW_WARNING_TIME 0.8f
-#define CLAW_DURATION 0.6f
-
-// Vị trí tay boss (relative to boss center) - dùng để spawn orb/projectile
-#define LEFT_HAND_OFFSET_X (-100.0f)
-#define LEFT_HAND_OFFSET_Y (50.0f)
-#define RIGHT_HAND_OFFSET_X (100.0f)
-#define RIGHT_HAND_OFFSET_Y (50.0f)
 
 static cute_tiled_map_t *arenaMap = NULL;
 static float arenaMapOffsetY = 0.0f;
@@ -383,7 +358,10 @@ static Vector2 lastPlayerPosForLaser = {640, 620.0f}; // Track player pos cho la
 #define DT_CLOSE_DIST   250.0f   // < 250: cận chiến -> Slam
 #define DT_MID_DIST     550.0f   // 250..550: tầm trung -> Projectile fan; > 550 -> Laser
 #define DT_EDGE_MARGIN  180.0f   // sát mép map -> dồn góc bằng Hazard/Claw
-// Note: StartClawAttack, DoProjectileAttack, StartLaserAttack, StartSlamAttack, StartHazardAttack, DoBarrageAttack, and StartRainAttack are moved to skill/ files
+
+
+
+
 
 void UpdateBoss(Boss *boss, Vector2 playerPos, ProjectileManager *pm, OrbManager *om, float dt, float *cameraShake) {
     // === DEATH SEQUENCE ===
@@ -748,11 +726,19 @@ void UpdateBoss(Boss *boss, Vector2 playerPos, ProjectileManager *pm, OrbManager
         }
     }
     
-    // --- Update Modular Skills ---
+    // --- Update Claw ---
     UpdateClawAttack(boss, dt);
+
+    // --- Update Laser ---
     UpdateLaserAttack(boss, playerPos, dt);
+
+    // --- Update Slam ---
     UpdateSlamAttack(boss, dt);
+
+    // --- Update Hazards ---
     UpdateHazardAttack(boss, dt);
+
+    // --- Update Rain ---
     UpdateRainAttack(boss, pm, dt);
 
     // --- Breathing Room Check ---
@@ -1252,11 +1238,57 @@ void DrawBossSkills(Boss *boss) {
     }
 
 
-    // --- Draw Modular Skills ---
-    DrawLaserAttack(boss);
+    // --- Draw Laser ---
+    DrawLaserAttack(boss, laserTex);
+
+    // --- Draw Slam Warning + Shockwave ---
     DrawSlamAttack(boss);
-    DrawClawAttack(boss);
-    DrawHazardAttack(boss);
+
+    // --- Draw Claw Attack ---
+    DrawClawAttack(boss, splashTexs);
+
+    // --- Draw Atom Bomb Visual (overlay khi triggered) ---
+    if (boss->atomTriggered) {
+        float t = boss->atomTimer;
+        // Whitewash flash full screen trong 0.5s đầu
+        if (t < 0.5f) {
+            float wAlpha = 1.0f - (t / 0.5f);
+            DrawRectangle(-2000, -2000, 5000, 5000,
+                (Color){255, 255, 255, (unsigned char)(wAlpha * 255)});
+        }
+        // Mushroom cloud explosion (Explosion.png scale to fullscreen)
+        if (explosionTex.id > 0 && t < 4.0f) {
+            int expFrame = ((int)(t * 6.0f)) % EXPLOSION_FRAMES;
+            Rectangle expSrc = { (float)(expFrame * EXPLOSION_FW), 0, (float)EXPLOSION_FW, (float)EXPLOSION_FH };
+            float scale = 8.0f + t * 3.0f;
+            Rectangle expDst = {
+                640.0f - scale * EXPLOSION_FW / 2.0f,
+                360.0f - scale * EXPLOSION_FH / 2.0f,
+                scale * EXPLOSION_FW,
+                scale * EXPLOSION_FH
+            };
+            DrawTexturePro(explosionTex, expSrc, expDst, (Vector2){0,0}, 0,
+                (Color){255, 200, 100, 255});
+        }
+        // Trash talk text giữa màn
+        DrawText("ATOMIC ANNIHILATION", 640 - MeasureText("ATOMIC ANNIHILATION", 48)/2,
+            300, 48, (Color){255, 50, 50, 255});
+        DrawText("MAY GA VCL!", 640 - MeasureText("MAY GA VCL!", 32)/2,
+            370, 32, (Color){255, 255, 100, 255});
+    }
+
+    // --- Draw Fight Timer (countdown đến atom) ---
+    if (boss->state == BOSS_FIGHTING && boss->fightTimer < ATOM_TRIGGER_TIME) {
+        float remaining = ATOM_TRIGGER_TIME - boss->fightTimer;
+        int mins = (int)(remaining / 60);
+        int secs = (int)remaining % 60;
+        char timerBuf[16];
+        snprintf(timerBuf, sizeof(timerBuf), "%02d:%02d", mins, secs);
+        Color timerColor = (remaining < 30.0f) ? (Color){255, 50, 50, 255} : (Color){255, 255, 100, 200};
+        DrawText(timerBuf, 1280/2 - 30, 90, 24, timerColor);
+    }
+
+    // --- Draw Rain Warning Overlay (Upper Screen) ---
     DrawRainAttack(boss);
 }
 
@@ -1294,7 +1326,8 @@ void BossTakeDamage(Boss *boss, int damage) {
     // Trash talk khi bị đánh (50% chance)
     TriggerTaunt(boss, TAUNTS_HIT, 4, 50);
 }
-// Note: CheckPlayerInShockwave, CheckPlayerInLaser, and CheckPlayerInClawZone are moved to skill/ files
+
+
 
 // CHỈ tượng đang ĐƯỢC KÍCH HOẠT (ACTIVE) mới là vật cản đặc.
 // Tượng đá tĩnh (INACTIVE), đang hiện lên (ACTIVATING), đang vỡ (SHATTERING)

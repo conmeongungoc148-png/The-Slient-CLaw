@@ -1,9 +1,6 @@
-#include "../boss.h"
-#include "../collision.h"
-#include <stdlib.h>
+#include "skill.h"
 #include <math.h>
-
-#define PROJECTILE_SPEED_BASE 250.0f
+#include <stdlib.h>
 
 void DoProjectileAttack(Boss *boss, Vector2 playerPos, ProjectileManager *pm) {
     // Spawn từ tay trái hoặc phải
