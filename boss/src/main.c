@@ -26,6 +26,8 @@ static float mapOffsetY = 0.0f;
 
 extern int gPreIntroSlowWalk;
 
+Font gGameFont;
+
 
 // === Background Music System ===
 typedef enum {
@@ -129,10 +131,13 @@ int main(void) {
     Sound slashSfx = LoadSound("assets/audio/sfx/slash.ogg");    // Claw slash
 
     Texture2D texAgis    = LoadTexture("assets/boss/sprites/agis.png");
+    gGameFont = LoadFontEx("assets/other/MedievalSharp-Regular.ttf", 96, NULL, 0);
+    SetTextureFilter(gGameFont.texture, TEXTURE_FILTER_BILINEAR);
     Texture2D texCatIdle = LoadTexture("assets/boss/sprites/cat/IDLE.png");
     Texture2D texCatWalk = LoadTexture("assets/boss/sprites/cat/WALK.png");
     Texture2D texCatRun  = LoadTexture("assets/boss/sprites/cat/RUN.png");
     Texture2D texCatJump = LoadTexture("assets/boss/sprites/cat/JUMP.png");
+    Texture2D texCatRunJump = LoadTexture("assets/boss/sprites/cat/RUNNING JUMP.png");
     Texture2D texCatAttack = LoadTexture("assets/boss/sprites/cat/ATTACK 1.png");
     Texture2D texCatHurt = LoadTexture("assets/boss/sprites/cat/HURT.png");
     Texture2D texForestTiles = LoadTexture("../asset_sources/forest_tiles/Final/Tiles.png");
@@ -703,7 +708,7 @@ int main(void) {
         }
 
         // Draw Player (under foreground overlay, so it's also darkened)
-        DrawBossPlayer(&player, texCatIdle, texCatWalk, texCatRun, texCatJump, texCatAttack, texCatHurt);
+        DrawBossPlayer(&player, texCatIdle, texCatWalk, texCatRun, texCatJump, texCatRunJump, texCatAttack, texCatHurt);
 
         // Foreground overlay
         if (boss.state == BOSS_PRE_INTRO && fgAlpha > 0.001f) {
@@ -807,10 +812,12 @@ int main(void) {
     }
 
     UnloadTexture(texAgis);
+    UnloadFont(gGameFont);
     UnloadTexture(texCatIdle);
     UnloadTexture(texCatWalk);
     UnloadTexture(texCatRun);
     UnloadTexture(texCatJump);
+    UnloadTexture(texCatRunJump);
     UnloadTexture(texCatAttack);
     UnloadTexture(texCatHurt);
     UnloadTexture(texForestTiles);

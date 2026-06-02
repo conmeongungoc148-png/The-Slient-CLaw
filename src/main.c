@@ -185,10 +185,14 @@ void GetMapBackgroundBounds(GameMap *map, float *minX, float *maxX, float *minY,
     }
 }
 
+Font gGameFont;
+
 int main(void) {
   setvbuf(stdout, NULL, _IONBF, 0);
   InitWindow(SCREEN_WIDTH, SCREEN_HEIGHT,
              "The Forest - Full Screen Infinite Map");
+  gGameFont = LoadFontEx("assets/other/MedievalSharp-Regular.ttf", 96, NULL, 0);
+  SetTextureFilter(gGameFont.texture, TEXTURE_FILTER_BILINEAR);
   SetTargetFPS(60);
 
    InitAudioDevice();
@@ -949,7 +953,7 @@ int main(void) {
         }
 
         // Draw Player (under foreground overlay, so it's also darkened)
-        DrawBossPlayer(&bossPlayer, texIdle, texWalk, texRun, texJump, texAttack, texHurt);
+        DrawBossPlayer(&bossPlayer, texIdle, texWalk, texRun, texJump, texRunJump, texAttack, texHurt);
 
         // Foreground overlay
         if (boss.state == BOSS_PRE_INTRO && fgAlpha > 0.001f) {
@@ -1190,6 +1194,7 @@ int main(void) {
   UnloadTexture(texHurt);
   UnloadMapData(&gameMap);
   UnloadRenderTexture(target);
+  UnloadFont(gGameFont);
   CloseWindow();
   return 0;
 }

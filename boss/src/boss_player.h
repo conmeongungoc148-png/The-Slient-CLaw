@@ -2,6 +2,16 @@
 #define PLAYER_H
 
 #include "raylib.h"
+
+extern Font gGameFont;
+
+#ifndef DrawText
+#define DrawText(text, x, y, size, ...) DrawTextEx(gGameFont, text, (Vector2){(float)(x), (float)(y)}, (float)(size), 1.0f, __VA_ARGS__)
+#endif
+
+#ifndef MeasureText
+#define MeasureText(text, size) ((int)MeasureTextEx(gGameFont, text, (float)(size), 1.0f).x)
+#endif
 #include "cute_tiled.h"
 #include <stdbool.h>
 
@@ -15,6 +25,7 @@ typedef enum {
     PSTATE_WALK,
     PSTATE_RUN,
     PSTATE_JUMP,
+    PSTATE_RUNJUMP,
     PSTATE_ATTACK,
     PSTATE_HURT
 } BossPlayerState;
@@ -44,7 +55,7 @@ typedef struct {
 void InitBossPlayer(BossPlayer *p, Vector2 pos, float groundY);
 void UpdateBossPlayer(BossPlayer *p, float dt);
 void UpdateBossPlayerOnMap(BossPlayer *p, cute_tiled_map_t *map, float mapOffsetY, float fallbackGroundY, float dt);
-void DrawBossPlayer(BossPlayer *p, Texture2D idle, Texture2D walk, Texture2D run, Texture2D jump, Texture2D attack, Texture2D hurt);
+void DrawBossPlayer(BossPlayer *p, Texture2D idle, Texture2D walk, Texture2D run, Texture2D jump, Texture2D runJump, Texture2D attack, Texture2D hurt);
 void BossPlayerTakeDamage(BossPlayer *p, int damage);
 
 #endif

@@ -1659,4 +1659,20 @@ RLAPI void DetachAudioMixedProcessor(AudioCallback processor); // Detach audio s
 }
 #endif
 
+// Custom game font overrides
+#ifndef RAYLIB_H_OVERRIDES
+#define RAYLIB_H_OVERRIDES
+
+extern Font gGameFont;
+
+#ifndef DrawText
+#define DrawText(text, x, y, size, ...) DrawTextEx(gGameFont, text, (Vector2){(float)(x), (float)(y)}, (float)(size), 1.0f, __VA_ARGS__)
+#endif
+
+#ifndef MeasureText
+#define MeasureText(text, size) ((int)MeasureTextEx(gGameFont, text, (float)(size), 1.0f).x)
+#endif
+
+#endif // RAYLIB_H_OVERRIDES
+
 #endif // RAYLIB_H

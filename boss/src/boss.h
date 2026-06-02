@@ -2,6 +2,16 @@
 #define BOSS_H
 
 #include "raylib.h"
+
+extern Font gGameFont;
+
+#ifndef DrawText
+#define DrawText(text, x, y, size, ...) DrawTextEx(gGameFont, text, (Vector2){(float)(x), (float)(y)}, (float)(size), 1.0f, __VA_ARGS__)
+#endif
+
+#ifndef MeasureText
+#define MeasureText(text, size) ((int)MeasureTextEx(gGameFont, text, (float)(size), 1.0f).x)
+#endif
 #include "projectile.h"
 #include "orb.h"
 #include "cute_tiled.h"

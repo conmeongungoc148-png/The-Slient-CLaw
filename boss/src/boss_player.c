@@ -6,7 +6,7 @@ extern int gAtomBombActive;
 extern int gPreIntroSlowWalk;
 
 #define GRAVITY 4000.0f
-#define JUMP_FORCE -900.0f
+#define JUMP_FORCE -990.0f
 #define HURT_INVINCIBLE_TIME 1.0f
 #define CHEAT_BUFFER_SIZE 16
 
@@ -50,7 +50,7 @@ void InitBossPlayer(BossPlayer *p, Vector2 pos, float groundY) {
     p->position = pos;
     p->velocity = (Vector2){0, 0};
     p->hurtBox = (Rectangle){pos.x - 10, pos.y - 30, 20, 30};
-    p->speed = 250.0f;
+    p->speed = 287.5f;
     p->groundY = groundY;
     p->hp = PLAYER_MAX_HP;
     p->facingRight = true;
@@ -167,8 +167,13 @@ static void UpdateBossPlayerInternal(BossPlayer *p, cute_tiled_map_t *map, float
         p->state = PSTATE_ATTACK;
         p->animSpeed = animSpeed;
     } else if (p->isJumping) {
-        p->state = PSTATE_JUMP;
+        p->state = p->isSprinting ? PSTATE_RUNJUMP : PSTATE_JUMP;
         p->animSpeed = 0.1f;
+        if (p->isSprinting) {
+            if (p->currentFrame > 4) p->currentFrame = 4;
+        } else {
+            if (p->currentFrame > 2) p->currentFrame = 2;
+        }
     } else if (moving) {
         p->state = p->isSprinting ? PSTATE_RUN : PSTATE_WALK;
         p->animSpeed = p->isSprinting ? 0.07f : 0.1f;
@@ -199,7 +204,7 @@ void UpdateBossPlayerOnMap(BossPlayer *p, cute_tiled_map_t *map, float mapOffset
     UpdateBossPlayerInternal(p, map, mapOffsetY, fallbackGroundY, dt);
 }
 
-void DrawBossPlayer(BossPlayer *p, Texture2D idle, Texture2D walk, Texture2D run, Texture2D jump, Texture2D attack, Texture2D hurt) {
+void DrawBossPlayer(BossPlayer *p, Texture2D idle, Texture2D walk, Texture2D run, Texture2D jump, Texture2D runJump, Texture2D attack, Texture2D hurt) {
     if (p->godMode) {
         DrawText("GOD MODE", GetScreenWidth() - 180, 40, 20, (Color){255, 215, 0, 220});
     }
@@ -216,11 +221,18 @@ void DrawBossPlayer(BossPlayer *p, Texture2D idle, Texture2D walk, Texture2D run
         case PSTATE_WALK: tex = walk; maxFrames = 12; break;
         case PSTATE_RUN: tex = run; maxFrames = 8; break;
         case PSTATE_JUMP: tex = jump; maxFrames = 3; break;
+        case PSTATE_RUNJUMP: tex = runJump; maxFrames = 5; break;
         case PSTATE_ATTACK: tex = attack; maxFrames = 8; break;
         case PSTATE_HURT: tex = hurt; maxFrames = 4; break;
     }
 
     int frameIdx = p->currentFrame % maxFrames;
+    if (p->state == PSTATE_RUNJUMP) {
+        int animFrame = p->currentFrame % 5;
+        if (animFrame == 0) frameIdx = 0;
+        else if (animFrame >= 1 && animFrame <= 3) frameIdx = 1;
+        else frameIdx = 2;
+    }
     Rectangle source = {
         (float)frameIdx * (PLAYER_FRAME_W + PLAYER_SPACING),
         0,
