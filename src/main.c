@@ -12,6 +12,7 @@
 #include "collision.h"
 #include "gamestate.h"
 #include "map.h"
+#include "audio.h"
 
 // === Boss Fight State & Assets ===
 static bool bossInitialized = false;
@@ -22,56 +23,13 @@ static OrbManager om;
 static cute_tiled_map_t *cuteBossMap = NULL;
 static GameState bossGameState = STATE_PLAYING;
 
-typedef enum {
-    BG_NONE = -1,
-    BG_PHRASE12 = 0,
-    BG_PHRASE3 = 1,
-    BG_PHRASE4 = 2,
-    BG_ENDING = 3
-} BgTrack;
-
-static Music bgTracks[4];
-static Music introMusic;
-static Sound laughSfx;
-static Sound damageSfx;
-static Sound alarmSfx;
-static Sound hitsSfx;
-static Sound slashSfx;
 static Texture2D texAgis;
-
-static BgTrack currentBgTrack = BG_NONE;
-static BgTrack pendingBgTrack = BG_NONE;
-static float bgVolume = 0.0f;
-static float bgVolumeTarget = 1.0f;
-static float bgFadeSpeed = 2.0f;  // Volume change per second
-static bool fadingOut = false;
-static bool endingTriggered = false;
-static BossPhase lastPhase = BOSS_PHASE_1;
 
 static bool prevClawActive = false;
 static bool prevLaserActive = false;
 static int prevHazardCount = 0;
 static bool clawSlashPlayed = false;
 static bool prevRainActive = false;
-static bool introMusicStarted = false;
-static bool laughPlayed = false;
-
-static BgTrack GetTrackForPhase(BossPhase phase) {
-    switch (phase) {
-        case BOSS_PHASE_1:
-        case BOSS_PHASE_2: return BG_PHRASE12;
-        case BOSS_PHASE_3: return BG_PHRASE3;
-        case BOSS_PHASE_4: return BG_PHRASE4;
-    }
-    return BG_PHRASE12;
-}
-
-static void SwitchBgTrack(BgTrack newTrack) {
-    if (newTrack == currentBgTrack) return;
-    pendingBgTrack = newTrack;
-    fadingOut = true;
-    bgVolumeTarget = 0.0f;
-}
 
 extern int gPreIntroSlowWalk;
 static Vector2 bossTargetPos = {608.0f, 220.0f};
@@ -195,7 +153,7 @@ int main(void) {
   SetTextureFilter(gGameFont.texture, TEXTURE_FILTER_BILINEAR);
   SetTargetFPS(60);
 
-   InitAudioDevice();
+   Audio_InitDevice();
 
   RenderTexture2D target = LoadRenderTexture(VIRTUAL_WIDTH, VIRTUAL_HEIGHT);
   SetTextureFilter(target.texture, TEXTURE_FILTER_POINT);
@@ -245,92 +203,30 @@ int main(void) {
 
     // --- UPDATE ---
     if (currentMapIndex == 2) {
-        // === UPDATE MUSIC STREAMS ===
         if (bossInitialized) {
-            UpdateMusicStream(introMusic);
-            if (currentBgTrack != BG_NONE) {
-                UpdateMusicStream(bgTracks[currentBgTrack]);
-            }
-            
-            // Bắt đầu phát intro music
-            if (boss.state == BOSS_INTRO && !introMusicStarted) {
-                PlayMusicStream(introMusic);
-                introMusicStarted = true;
-            }
-
-            // Phát tiếng cười khi vào ROAR
-            if (boss.state == BOSS_ROAR && !laughPlayed) {
-                PlaySound(laughSfx);
-                laughPlayed = true;
-            }
-
-            // === BACKGROUND MUSIC SYSTEM ===
-            if (boss.state == BOSS_FIGHTING && currentBgTrack == BG_NONE && !fadingOut) {
-                BgTrack startTrack = GetTrackForPhase(boss.phase);
-                currentBgTrack = startTrack;
-                PlayMusicStream(bgTracks[currentBgTrack]);
-                bgVolume = 0.0f;
-                bgVolumeTarget = 1.0f;
-                SetMusicVolume(bgTracks[currentBgTrack], bgVolume);
-                lastPhase = boss.phase;
-            }
-
-            if (boss.state == BOSS_FIGHTING && currentBgTrack != BG_NONE) {
-                if (boss.phase != lastPhase) {
-                    BgTrack desiredTrack = GetTrackForPhase(boss.phase);
-                    if (desiredTrack != currentBgTrack && !fadingOut) {
-                        SwitchBgTrack(desiredTrack);
-                    }
-                    lastPhase = boss.phase;
-                }
-            }
-
-            if (boss.state == BOSS_DYING && !endingTriggered) {
-                if (currentBgTrack != BG_ENDING && !fadingOut) {
-                    SwitchBgTrack(BG_ENDING);
-                }
-                endingTriggered = true;
-            }
-
-            float volumeStep = bgFadeSpeed * dt;
-            if (bgVolume < bgVolumeTarget) {
-                bgVolume += volumeStep;
-                if (bgVolume > bgVolumeTarget) bgVolume = bgVolumeTarget;
-            } else if (bgVolume > bgVolumeTarget) {
-                bgVolume -= volumeStep;
-                if (bgVolume < bgVolumeTarget) bgVolume = bgVolumeTarget;
-            }
-
-            if (currentBgTrack != BG_NONE) {
-                SetMusicVolume(bgTracks[currentBgTrack], bgVolume);
-            }
-
-            if (fadingOut && bgVolume <= 0.001f) {
-                if (currentBgTrack != BG_NONE) {
-                    StopMusicStream(bgTracks[currentBgTrack]);
-                }
-                currentBgTrack = pendingBgTrack;
-                pendingBgTrack = BG_NONE;
-                fadingOut = false;
-                if (currentBgTrack != BG_NONE) {
-                    SetMusicVolume(bgTracks[currentBgTrack], 0.0f);
-                    PlayMusicStream(bgTracks[currentBgTrack]);
-                    bgVolumeTarget = 1.0f;
-                }
-            }
-
-            if (currentBgTrack == BG_ENDING && !fadingOut && bgVolume > 0.5f) {
-                float played = GetMusicTimePlayed(bgTracks[BG_ENDING]);
-                float total = GetMusicTimeLength(bgTracks[BG_ENDING]);
-                if (total > 0 && played >= total - 0.2f) {
-                    boss.defeated = true;
-                    boss.state = BOSS_DEFEATED;
-                }
-            }
+            Audio_Update(dt, &boss);
         }
 
         // === BOSS FIGHT LOGIC UPDATE ===
         if (bossGameState == STATE_PLAYING) {
+            // Skip phase cheat
+            if (IsKeyPressed(KEY_K)) {
+                if (boss.state == BOSS_FIGHTING) {
+                    boss.boomsRemaining = 0;
+                    TraceLog(LOG_INFO, "CHEAT: Skipped fight phase!");
+                } else if (boss.state == BOSS_FAKE_DEATH) {
+                    if (boss.walkAwayDoorActive) {
+                        bossPlayer.position.x = 1065.0f; // trigger revival walk
+                    } else {
+                        boss.reviveWalkTimer = 3.6f; // jump directly to TRUE_ENRAGE
+                    }
+                    TraceLog(LOG_INFO, "CHEAT: Skipped fake death sequence!");
+                } else if (boss.state == BOSS_TRUE_ENRAGE) {
+                    BossTakeDamage(&boss, 1);
+                    TraceLog(LOG_INFO, "CHEAT: Defeated boss enrage phase!");
+                }
+            }
+
             // Đi-bộ-only: pre-intro HOẶC giai đoạn đi ra cửa (boss giả chết, cửa mở).
             gPreIntroSlowWalk = (boss.state == BOSS_PRE_INTRO) ||
                                 (boss.state == BOSS_FAKE_DEATH && boss.walkAwayDoorActive);
@@ -390,7 +286,7 @@ int main(void) {
                 if (bossPlayer.position.x >= 1060.0f) {
                     boss.walkAwayDoorActive = false;
                     boss.reviveWalkTimer = 0.0001f;  // bật giai đoạn REVIVAL
-                    PlaySound(laughSfx);
+                    Audio_PlaySFX(SFX_LAUGH);
                 }
             }
 
@@ -400,26 +296,26 @@ int main(void) {
                 
                 // Audio Alarm, Claw, etc.
                 if (boss.clawActive && !prevClawActive) {
-                    PlaySound(alarmSfx);
+                    Audio_PlaySFX(SFX_ALARM);
                 }
                 if (boss.clawActive && boss.clawWarningTime <= 0 && boss.clawDuration > 0 && !clawSlashPlayed) {
-                    StopSound(alarmSfx);
-                    PlaySound(slashSfx);
+                    Audio_StopSFX(SFX_ALARM);
+                    Audio_PlaySFX(SFX_SLASH);
                     clawSlashPlayed = true;
                 }
                 if (!boss.clawActive) clawSlashPlayed = false;
                 prevClawActive = boss.clawActive;
 
                 if (boss.laserActive && !prevLaserActive) {
-                    PlaySound(alarmSfx);
+                    Audio_PlaySFX(SFX_ALARM);
                 }
                 if (prevLaserActive && boss.laserActive && boss.laserChargeTime <= 0) {
-                    StopSound(alarmSfx);
+                    Audio_StopSFX(SFX_ALARM);
                 }
                 prevLaserActive = boss.laserActive;
 
                 if (boss.hazardCount > 0 && prevHazardCount == 0) {
-                    PlaySound(alarmSfx);
+                    Audio_PlaySFX(SFX_ALARM);
                 }
                 prevHazardCount = boss.hazardCount;
                 bool anyHazardActive = false;
@@ -430,15 +326,15 @@ int main(void) {
                     }
                 }
                 if (!anyHazardActive && prevHazardCount > 0) {
-                    StopSound(alarmSfx);
+                    Audio_StopSFX(SFX_ALARM);
                     prevHazardCount = 0;
                 }
 
                 if (boss.rainActive && !prevRainActive) {
-                    PlaySound(alarmSfx);
+                    Audio_PlaySFX(SFX_ALARM);
                 }
                 if (prevRainActive && boss.rainActive && boss.rainWarningTime <= 0) {
-                    StopSound(alarmSfx);
+                    Audio_StopSFX(SFX_ALARM);
                 }
                 prevRainActive = boss.rainActive;
 
@@ -458,7 +354,7 @@ int main(void) {
                     TryCatchOrb(&om, bossPlayer.hurtBox, orbTarget);
                     for (int i = 0; i < MAX_ORBS; i++) {
                         if (wasReady[i] && om.orbs[i].state == ORB_RETURNING) {
-                            PlaySound(hitsSfx);
+                            Audio_PlaySFX(SFX_HITS);
                         }
                     }
                 }
@@ -480,7 +376,7 @@ int main(void) {
                     if (boss.state == BOSS_TRUE_ENRAGE) {
                         if (CheckCollision(om.orbs[i].hitbox, boss.hurtBox)) {
                             BossTakeDamage(&boss, om.orbs[i].damage);
-                            PlaySound(damageSfx);
+                            Audio_PlaySFX(SFX_DAMAGE);
                             om.orbs[i].state = ORB_INACTIVE;
                         }
                     } else {
@@ -490,7 +386,7 @@ int main(void) {
                             float dy = boss.booms[bi].position.y - om.orbs[i].position.y;
                             if (dx*dx + dy*dy < 70.0f*70.0f) {
                                 BoomHit(&boss, bi);
-                                PlaySound(damageSfx);
+                                Audio_PlaySFX(SFX_DAMAGE);
                                 om.orbs[i].state = ORB_INACTIVE;
                             }
                         }
@@ -530,7 +426,7 @@ int main(void) {
                     }
                 }
             } else {
-                StopSound(alarmSfx);
+                Audio_StopSFX(SFX_ALARM);
             }
 
             // Boundaries
@@ -549,18 +445,8 @@ int main(void) {
                 InitProjectileManager(&pm);
                 InitOrbManager(&om);
                 
-                StopMusicStream(introMusic);
-                if (currentBgTrack != BG_NONE) StopMusicStream(bgTracks[currentBgTrack]);
-                currentBgTrack = BG_NONE;
-                pendingBgTrack = BG_NONE;
-                bgVolume = 0.0f;
-                bgVolumeTarget = 1.0f;
-                fadingOut = false;
-                endingTriggered = false;
-                lastPhase = BOSS_PHASE_1;
+                Audio_ResetBossFight();
                 
-                introMusicStarted = false;
-                laughPlayed = false;
                 prevClawActive = false;
                 prevLaserActive = false;
                 prevHazardCount = 0;
@@ -593,15 +479,7 @@ int main(void) {
 
         // Unload Map 3 assets if they are loaded
         if (bossInitialized) {
-            UnloadMusicStream(introMusic);
-            for (int i = 0; i < 4; i++) {
-                UnloadMusicStream(bgTracks[i]);
-            }
-            UnloadSound(laughSfx);
-            UnloadSound(damageSfx);
-            UnloadSound(alarmSfx);
-            UnloadSound(hitsSfx);
-            UnloadSound(slashSfx);
+            Audio_UnloadBossAssets();
             UnloadTexture(texAgis);
             UnloadProjectileAssets();
             UnloadBossAssets();
@@ -621,22 +499,7 @@ int main(void) {
 
         if (currentMapIndex == 2) {
             // Lazy load assets for boss fight
-            introMusic = LoadMusicStream("boss/assets/audio/music/start.ogg");
-            introMusic.looping = false;
-            bgTracks[BG_PHRASE12] = LoadMusicStream("boss/assets/audio/music/background/phrase1and2.ogg");
-            bgTracks[BG_PHRASE3] = LoadMusicStream("boss/assets/audio/music/background/phrase3.ogg");
-            bgTracks[BG_PHRASE4] = LoadMusicStream("boss/assets/audio/music/background/phrase4.ogg");
-            bgTracks[BG_ENDING] = LoadMusicStream("boss/assets/audio/music/background/ending.ogg");
-            bgTracks[BG_PHRASE12].looping = true;
-            bgTracks[BG_PHRASE3].looping = true;
-            bgTracks[BG_PHRASE4].looping = true;
-            bgTracks[BG_ENDING].looping = false;
-
-            laughSfx = LoadSound("boss/assets/audio/sfx/laugh.ogg");
-            damageSfx = LoadSound("boss/assets/audio/sfx/damage.ogg");
-            alarmSfx = LoadSound("boss/assets/audio/sfx/alarm.ogg");
-            hitsSfx = LoadSound("boss/assets/audio/sfx/hits.ogg");
-            slashSfx = LoadSound("boss/assets/audio/sfx/slash.ogg");
+            Audio_LoadBossAssets();
 
             texAgis = LoadTexture("boss/assets/boss/sprites/agis.png");
             cuteBossMap = MapLoad("boss/assets/boss map 1v1.tmj");
@@ -651,21 +514,12 @@ int main(void) {
             InitOrbManager(&om);
 
             bossInitialized = true;
-            introMusicStarted = false;
-            laughPlayed = false;
-            currentBgTrack = BG_NONE;
-            pendingBgTrack = BG_NONE;
-            bgVolume = 0.0f;
-            bgVolumeTarget = 1.0f;
-            fadingOut = false;
-            endingTriggered = false;
-            lastPhase = BOSS_PHASE_1;
             prevClawActive = false;
             prevLaserActive = false;
             prevHazardCount = 0;
             clawSlashPlayed = false;
             prevRainActive = false;
-            StopSound(alarmSfx);
+            Audio_StopSFX(SFX_ALARM);
             bossGameState = STATE_PLAYING;
 
             // Reset boss player position
@@ -1062,14 +916,6 @@ int main(void) {
         if (boss.state == BOSS_FAKE_DEATH) {
             float t = boss.fakeDeathTimer;
             // Nhạc lịm dần ở pha 1-2 (lừa player tưởng thắng), bùng lại khi hồi sinh.
-            if (currentBgTrack != BG_NONE) {
-                if (t < 4.5f) {
-                    float v = bgVolume * (1.0f - (t / 4.5f));
-                    SetMusicVolume(bgTracks[currentBgTrack], v < 0 ? 0 : v);
-                } else {
-                    SetMusicVolume(bgTracks[currentBgTrack], bgVolume);
-                }
-            }
 
             if (t < 3.0f) {
                 // PHA 1 COLLAPSE: tối dần + "VICTORY?" mờ hiện -> đánh lừa.
@@ -1153,6 +999,8 @@ int main(void) {
                 (Color){255, 230, 150, (unsigned char)(160 + pulse*95)});
         }
 
+        Audio_DrawSubtitles();
+
         if (bossGameState == STATE_WIN) DrawWinScreen();
         if (bossGameState == STATE_LOSE) DrawLoseScreen();
     }
@@ -1163,15 +1011,7 @@ int main(void) {
 
   // --- CLEANUP ---
   if (bossInitialized) {
-      UnloadMusicStream(introMusic);
-      for (int i = 0; i < 4; i++) {
-          UnloadMusicStream(bgTracks[i]);
-      }
-      UnloadSound(laughSfx);
-      UnloadSound(damageSfx);
-      UnloadSound(alarmSfx);
-      UnloadSound(hitsSfx);
-      UnloadSound(slashSfx);
+      Audio_UnloadBossAssets();
       UnloadTexture(texAgis);
       UnloadProjectileAssets();
       UnloadBossAssets();
@@ -1183,7 +1023,7 @@ int main(void) {
           cuteBossMap = NULL;
       }
   }
-  CloseAudioDevice();
+  Audio_CloseDevice();
 
   UnloadTexture(texIdle);
   UnloadTexture(texWalk);
