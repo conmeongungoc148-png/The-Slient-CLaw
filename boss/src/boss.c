@@ -13,6 +13,18 @@ static Texture2D explosionTex = {0};
 static Texture2D laserTex = {0};
 static bool spritesLoaded = false;
 
+// Boss glow shader variables
+static Shader glowShader = {0};
+static int glowColorLoc = 0;
+static int glowRadiusLoc = 0;
+static bool glowShaderLoaded = false;
+
+// Thanos snap dissolve shader
+static Shader dissolveShader = {0};
+static int dissolveFactorLoc = 0;
+static bool dissolveShaderLoaded = false;
+
+
 // === STATUE ANIMATION TEXTURES ===
 // Grid layout: 4 cols x 4 rows, each tile 64x64 pixels, sheet 256x256
 static Texture2D statueTex[3] = {0};  // 0=activating 1=active 2=shatter
@@ -63,6 +75,22 @@ static void LoadBossSprites(void) {
     statueTex[0] = LoadTexture(GetBossAssetPath("assets/statue/statuestart.png"));
     statueTex[1] = LoadTexture(GetBossAssetPath("assets/statue/statueindle.png"));
     statueTex[2] = LoadTexture(GetBossAssetPath("assets/statue/statuedestruction.png"));
+
+    // Load glow shader
+    glowShader = LoadShader(0, GetBossAssetPath("assets/glow.fs"));
+    if (glowShader.id > 0) {
+        glowColorLoc = GetShaderLocation(glowShader, "glowColor");
+        glowRadiusLoc = GetShaderLocation(glowShader, "glowRadius");
+        glowShaderLoaded = true;
+    }
+
+    // Load dissolve shader
+    dissolveShader = LoadShader(0, GetBossAssetPath("assets/dissolve.fs"));
+    if (dissolveShader.id > 0) {
+        dissolveFactorLoc = GetShaderLocation(dissolveShader, "dissolveFactor");
+        dissolveShaderLoaded = true;
+    }
+
     spritesLoaded = true;
 }
 
@@ -80,11 +108,22 @@ void UnloadBossAssets(void) {
         }
         explosionTex = (Texture2D){0};
         laserTex = (Texture2D){0};
+
+        if (glowShaderLoaded) {
+            UnloadShader(glowShader);
+            glowShaderLoaded = false;
+        }
+
+        if (dissolveShaderLoaded) {
+            UnloadShader(dissolveShader);
+            dissolveShaderLoaded = false;
+        }
+
         spritesLoaded = false;
     }
 }
 
-#define INTRO_DURATION 15.5f
+#define INTRO_DURATION 41.5f
 #define ROAR_DURATION 2.0f
 #define LASER_MIN_PLAYER_X 200.0f // Player phải ở trong vùng này mới ra laser
 #define LASER_MAX_PLAYER_X 1080.0f
@@ -210,9 +249,8 @@ void InitBoss(Boss *boss, Vector2 startPos, Vector2 targetPos) {
     boss->atomTriggered = false;
     gAtomBombActive = 0;  // Reset flag khi init/restart
 
-    // Fake-death twist
-    boss->fakeDeathDone = false;
-    boss->fakeDeathTimer = 0.0f;
+    // Outro cutscene
+    boss->outroTimer = 0.0f;
 
     // Boom node system
     boss->boomsRemaining = 0;
@@ -220,8 +258,7 @@ void InitBoss(Boss *boss, Vector2 startPos, Vector2 targetPos) {
     boss->boomStaggerTimer = 0.0f;
     boss->boomNextOrbDelay = 4.0f;
     boss->phaseHitFlash = 0.0f;
-    boss->walkAwayDoorActive = false;
-    boss->reviveWalkTimer = 0.0f;
+    boss->ringShockwaveTimer = 0.0f;
 
     // Skill sequencing & special laser logic
     boss->skillRoundType = ATTACK_SLAM;
@@ -250,47 +287,6 @@ static void TriggerTaunt(Boss *boss, const char **pool, int poolSize, int chance
     boss->tauntTimer = 2.5f;
 }
 
-static void UpdatePhase(Boss *boss) {
-    float hpPercent = (float)boss->hp / boss->maxHp;
-    BossPhase newPhase = boss->phase;
-
-    if (hpPercent > 0.80f) newPhase = BOSS_PHASE_1;
-    else if (hpPercent > 0.55f) newPhase = BOSS_PHASE_2;
-    else if (hpPercent > 0.25f) newPhase = BOSS_PHASE_3;
-    else newPhase = BOSS_PHASE_4;
-
-    if (newPhase != boss->phase) {
-        BossPhase oldPhase = boss->phase;
-        boss->phase = newPhase;
-        switch (newPhase) {
-            case BOSS_PHASE_1:
-                boss->attackInterval = 3.0f;
-                boss->orbInterval = 5.0f;
-                break;
-            case BOSS_PHASE_2:
-                boss->attackInterval = 2.4f;
-                boss->orbInterval = 4.5f;
-                break;
-            case BOSS_PHASE_3:
-                boss->attackInterval = 2.0f;
-                boss->orbInterval = 4.0f;
-                break;
-            case BOSS_PHASE_4:
-                boss->attackInterval = 1.8f;
-                boss->orbInterval = 3.5f;
-                break;
-        }
-        // Phase 4 → trash talk 100% (final form moment)
-        if (newPhase == BOSS_PHASE_4 && oldPhase != BOSS_PHASE_4) {
-            boss->tauntText = TAUNTS_P4[rand() % 4];
-            boss->tauntTimer = 3.5f;
-        }
-        
-        // Reset skill round on phase change
-        boss->skillRoundActive = false;
-        boss->boomLaserSkillActive = false;
-    }
-}
 
 // Cooldown per attack type (seconds)
 static const float ATTACK_COOLDOWN_TABLE[9] = {
@@ -414,11 +410,12 @@ void UpdateBoss(Boss *boss, Vector2 playerPos, ProjectileManager *pm, OrbManager
                 boss->preIntroLightProgress = 1.0f;
                 boss->state = BOSS_INTRO;
                 boss->introTimer = 0.0f;
+                BoomSpawnPhase(boss);
             }
         } else {
-            // Check if player is close to the beacon (within 40px in X distance)
+            // Check if player is close to the beacon (within 15px in X distance)
             float dist = fabsf(playerPos.x - boss->beaconPos.x);
-            if (dist < 40.0f) {
+            if (dist < 15.0f) {
                 boss->preIntroTriggered = true;
                 boss->preIntroLightProgress = 0.0f;
             }
@@ -428,154 +425,69 @@ void UpdateBoss(Boss *boss, Vector2 playerPos, ProjectileManager *pm, OrbManager
 
     // === INTRO SEQUENCE ===
     if (boss->state == BOSS_INTRO) {
+        if (IsKeyPressed(KEY_ENTER)) {
+            boss->introTimer = INTRO_DURATION;
+            boss->position.y = boss->targetY;
+        }
+
         boss->introTimer += dt;
         float progress = boss->introTimer / INTRO_DURATION;
         if (progress > 1.0f) progress = 1.0f;
         
-        // Boss rise CHẬM RÃII trong 45% intro đầu (0-7s), sau đó ở lại với floating effect
-        float startY = 1200.0f;
-        if (progress < 0.45f) {
-            // Phase 1 (0-7s): rise chậm từ bên dưới màn hình
-            float riseProgress = progress / 0.45f;
-            float eased = 1.0f - powf(1.0f - riseProgress, 3.0f);  // ease-out cubic
-            boss->position.y = startY + (boss->targetY - startY) * eased;
+        // Boss floating gently at target height
+        boss->position.y = boss->targetY + sinf(boss->introTimer * 2.0f) * 8.0f;
+        
+        UpdateBooms(boss, playerPos, om, dt);
+        
+        // Camera shake during flashing phase (35s - 41.5s)
+        if (boss->introTimer >= 35.0f && boss->introTimer < 41.5f) {
+            *cameraShake = 3.0f + (boss->introTimer - 35.0f) * 1.5f;
         } else {
-            // Phase 2 (7-15s): boss visible, floating nhẹ + tăng intensity
-            boss->position.y = boss->targetY + sinf(boss->introTimer * 2.0f) * 8.0f;
+            *cameraShake = 0.0f;
         }
         
-        // Camera shake tăng dần (mạnh dần khi gần ROAR)
-        float shakeIntensity = 2.0f + progress * 6.0f;
-        *cameraShake = shakeIntensity;
-        
-        // Animation tăng tốc dần (boss "thức dậy")
-        boss->animSpeed = 0.25f - progress * 0.18f;  // 0.25 → 0.07
+        boss->animSpeed = 0.1f;
         
         if (progress >= 1.0f) {
-            boss->state = BOSS_ROAR;
-            boss->roarTimer = ROAR_DURATION;
-            boss->animSpeed = 0.02f;  // Animation x5 nhanh hơn khi ROAR
-        }
-        return;
-    }
-
-    // === ROAR SEQUENCE ===
-    if (boss->state == BOSS_ROAR) {
-        boss->roarTimer -= dt;
-        // Screen shake mạnh
-        *cameraShake = 8.0f * (boss->roarTimer / ROAR_DURATION);
-        
-        if (boss->roarTimer <= 0) {
             boss->state = BOSS_FIGHTING;
+            boss->ringShockwaveTimer = 0.01f; // Sóng xung kích lúc vừa dứt intro
+            boss->attackInterval = fmaxf(0.2f, boss->attackInterval - 2.5f);
             *cameraShake = 0;
-            boss->animSpeed = 0.1f;  // Trả về tốc độ bình thường khi vào fighting
         }
-        return;
-    }
-
-    // === FAKE DEATH CUTSCENE (kiểu Dylan/Sans): 4 pha, ~8 giây ===
-    // Pha 1 COLLAPSE 0.0-3.0s: boss gục, xám dần, im lặng -> lừa player tưởng thắng.
-    // Pha 2 SILENCE  3.0-4.5s: khoảng lặng, T=4.0s mắt chớp đỏ báo trước.
-    // Pha 3 REVIVAL  4.5-6.5s: glitch đỏ, boss giật + trồi dậy về chỗ cũ, rung mạnh.
-    // Pha 4 DECLARE  6.5-8.0s: gầm + taunt -> sau đó vào TRUE_ENRAGE.
-    // === FAKE DEATH + WALK-TO-DOOR + REVIVAL ===
-    // Luồng: COLLAPSE (boss "chết") -> WAIT (player đi bộ ra cửa phải) -> REVIVAL (boss trồi lên) -> TRUE_ENRAGE.
-    if (boss->state == BOSS_FAKE_DEATH) {
-        // Animation boss vẫn chạy chậm trong lúc cutscene (gục)
-        boss->frameTimer += dt;
-        if (boss->frameTimer >= 0.18f) {
-            boss->frameTimer = 0;
-            boss->currentFrame = (boss->currentFrame + 1) % BOSS_TOTAL_FRAMES;
-        }
-
-        // GIAI ĐOẠN COLLAPSE: boss chìm xuống ~3s rồi "chết" -> mở cửa thoát.
-        if (!boss->walkAwayDoorActive && boss->reviveWalkTimer <= 0.0f) {
-            boss->fakeDeathTimer += dt;
-            if (boss->fakeDeathTimer < 3.0f) {
-                boss->position.y += 22.0f * dt;
-                *cameraShake = 0.0f;
-            } else {
-                // Collapse xong -> hiện cửa thoát, trao quyền đi-bộ cho player (xử lý ở main.c).
-                boss->walkAwayDoorActive = true;
-                *cameraShake = 0.0f;
-            }
+        
+        // Only run fighting updates when player is playing during intro (12s to 35s)
+        if (boss->introTimer < 12.0f || boss->introTimer >= 35.0f) {
+            UpdateBooms(boss, playerPos, om, dt);
             return;
         }
-
-        // GIAI ĐOẠN WAIT: boss nằm gục, chờ player đi tới cửa.
-        // main.c sẽ set walkAwayDoorActive=false + reviveWalkTimer=epsilon khi player tới cửa.
-        if (boss->walkAwayDoorActive) {
-            *cameraShake = 0.0f;
-            return;
-        }
-
-        // GIAI ĐOẠN REVIVAL + DECLARE (đếm bằng reviveWalkTimer sau khi player tới cửa).
-        boss->reviveWalkTimer += dt;
-        float r = boss->reviveWalkTimer;
-        if (r < 2.0f) {
-            // REVIVAL: glitch + trồi dậy về targetY, rung mạnh dần.
-            float k = r / 2.0f;
-            boss->position.y += (boss->targetY - boss->position.y) * fminf(1.0f, dt * 6.0f);
-            *cameraShake = 5.0f + k * 20.0f;
-        } else if (r < 3.5f) {
-            // DECLARE: đứng vững, gầm.
-            boss->position.y = boss->targetY;
-            *cameraShake = 6.0f;
-            if (boss->tauntTimer <= 0.0f) {
-                boss->tauntText = "CHUA XONG DAU!";
-                boss->tauntTimer = 2.0f;
-            } else {
-                boss->tauntTimer -= dt;
-            }
-        } else {
-            // -> TRUE_ENRAGE.
-            boss->state = BOSS_TRUE_ENRAGE;
-            boss->position.y = boss->targetY;
-            boss->hp = 1;
-            boss->maxHp = BOSS_MAX_HP;
-            boss->phase = BOSS_PHASE_4;
-            boss->fakeDeathTimer = 0.0f;
-            boss->reviveWalkTimer = 0.0f;
-            boss->tauntText = "CHET DI!";
-            boss->tauntTimer = 3.0f;
-            DoBarrageAttack(boss, pm);
-            Vector2 hand = { boss->position.x, boss->position.y + 40.0f };
-            SpawnParryOrb(om, hand, playerPos);
-            boss->orbTimer = 0.0f;
-            boss->orbInterval = 2.0f;
-            *cameraShake = 25.0f;
-        }
-        return;
     }
 
-    // === TRUE ENRAGE: 1 HP, bullet hell; parry orb kết liễu thật ===
-    if (boss->state == BOSS_TRUE_ENRAGE) {
-        UpdatePhase(boss); // giữ phase 4
-
-        // Bắn barrage định kỳ tạo bullet hell, nhưng vẫn nhả orb để player parry.
-        boss->attackTimer += dt;
-        if (boss->attackTimer >= 1.6f) {
-            boss->attackTimer = 0.0f;
-            DoBarrageAttack(boss, pm);
-        }
-        boss->orbTimer += dt;
-        if (boss->orbTimer >= boss->orbInterval) {
-            boss->orbTimer = 0.0f;
-            Vector2 hand = { boss->position.x, boss->position.y + 40.0f };
-            SpawnParryOrb(om, hand, playerPos);
+    // === OUTRO CUTSCENE ===
+    if (boss->state == BOSS_OUTRO) {
+        if (IsKeyPressed(KEY_ENTER)) {
+            boss->outroTimer = 51.0f;
         }
 
-        if (boss->tauntTimer > 0) {
-            boss->tauntTimer -= dt;
-            if (boss->tauntTimer < 0) boss->tauntTimer = 0;
+        if (boss->outroTimer == 0.0f) {
+            // Clean up when entering outro
+            boss->laserActive = false;
+            boss->slamActive = false;
+            boss->clawActive = false;
+            boss->rainActive = false;
+            boss->boomLaserSkillActive = false;
+            boss->hazardCount = 0;
+            boss->boomsRemaining = 0;
+            for (int i = 0; i < MAX_PROJECTILES; i++) pm->projectiles[i].active = false;
+            for (int i = 0; i < MAX_ORBS; i++) om->orbs[i].state = ORB_INACTIVE;
         }
-        if (boss->shakeTimer > 0) {
-            boss->shakeTimer -= dt;
-            if (boss->shakeTimer < 0) boss->shakeTimer = 0;
+        
+        boss->outroTimer += dt;
+        
+        if (boss->outroTimer >= 51.0f) {
+            boss->state = BOSS_DEFEATED;
+            boss->defeated = true;
+            boss->deathTimer = 4.0f; // Instantly finish death timer to trigger WIN
         }
-        lastPlayerPosForLaser = playerPos;
-        boss->hurtBox.x = boss->position.x - 100;
-        boss->hurtBox.y = boss->position.y - 100;
         return;
     }
 
@@ -597,41 +509,54 @@ void UpdateBoss(Boss *boss, Vector2 playerPos, ProjectileManager *pm, OrbManager
     }
     UpdateBooms(boss, playerPos, om, dt);
 
-    // Boss nhả orb VÀNG để parry. Phase 1 (0): 20s; các phase khác: 30-45s.
-    boss->boomStaggerTimer += dt;
-    if (boss->boomStaggerTimer >= boss->boomNextOrbDelay) {
-        boss->boomStaggerTimer = 0.0f;
-        if (boss->phase == BOSS_PHASE_1) {
-            boss->boomNextOrbDelay = 20.0f;
-        } else {
-            boss->boomNextOrbDelay = 30.0f + (float)(rand() % 16); // 30-45s
+    // Boss nhả orb VÀNG để parry (chỉ khi đang đánh thật sự)
+    if (boss->state == BOSS_FIGHTING) {
+        boss->boomStaggerTimer += dt;
+        if (boss->boomStaggerTimer >= boss->boomNextOrbDelay) {
+            boss->boomStaggerTimer = 0.0f;
+            if (boss->phase == BOSS_PHASE_1) {
+                boss->boomNextOrbDelay = 20.0f;
+            } else {
+                boss->boomNextOrbDelay = 30.0f + (float)(rand() % 16); // 30-45s
+            }
+            Vector2 hand = { boss->position.x, boss->position.y + 40.0f };
+            SpawnParryOrb(om, hand, playerPos);
         }
-        Vector2 hand = { boss->position.x, boss->position.y + 40.0f };
-        SpawnParryOrb(om, hand, playerPos);
     }
 
     // Phá đủ 3 cục boom -> boss DÍNH SÁT THƯƠNG -> sang phase mới (hoặc chết).
     if (boss->boomsSpawned && boss->boomsRemaining <= 0 && boss->phaseHitFlash <= 0.0f) {
-        boss->phaseHitFlash = 0.6f;       // flash dính đòn
-        boss->shakeTimer = 0.4f;
-        boss->shakeIntensity = 25.0f;
-        *cameraShake = 18.0f;
         boss->hp -= boss->maxHp / 4;      // clear 1 phase = -25% máu
         if (boss->hp < 0) boss->hp = 0;
         boss->boomsSpawned = false;       // spawn boom phase mới
         // Reset orb vàng: phase mới luôn có delay ngắn ngẫu nhiên (4-7s), không spawn ngay.
         boss->boomStaggerTimer = 0.0f;
         boss->boomNextOrbDelay = 4.0f + (float)(rand() % 4); // 4-7s
+        
         if (boss->phase < BOSS_PHASE_4) {
+            boss->phaseHitFlash = 0.6f;       // flash dính đòn
+            boss->ringShockwaveTimer = 0.01f; // bắt đầu vòng lặp shockwave
+            boss->shakeTimer = 0.4f;
+            boss->shakeIntensity = 25.0f;
+            *cameraShake = 18.0f;
             boss->phase = (BossPhase)((int)boss->phase + 1);
             boss->tauntText = TAUNTS_P4[rand() % 4];
             boss->tauntTimer = 2.5f;
         } else {
-            // Hết phase 4 -> boss "chết" -> cutscene chết giả + đi ra cửa.
-            boss->state = BOSS_FAKE_DEATH;
-            boss->fakeDeathTimer = 0.0f;
-            boss->fakeDeathDone = true;
+            // Hết phase 4 -> boss "chết" -> cutscene kết thúc mới
+            boss->state = BOSS_OUTRO;
+            boss->outroTimer = 0.0f;
+            boss->ringShockwaveTimer = 0.0f;
+            *cameraShake = 0.0f;
             return;
+        }
+    }
+
+    // Update shockwave timer
+    if (boss->ringShockwaveTimer > 0.0f) {
+        boss->ringShockwaveTimer += dt * 1.5f; // Tốc độ lan ra
+        if (boss->ringShockwaveTimer > 1.5f) { // Shockwave kết thúc sau 1s
+            boss->ringShockwaveTimer = 0.0f;
         }
     }
 
@@ -941,63 +866,25 @@ void DrawBossBody(Boss *boss, Texture2D spriteSheet, float cameraOffsetY) {
         return;
     }
 
-    // === FAKE-DEATH CUTSCENE VISUAL ===
-    // 3 giai đoạn: COLLAPSE (gục xám) -> WAIT (nằm xám, chờ player ra cửa) -> REVIVAL (glitch + trồi dậy tím).
-    if (boss->state == BOSS_FAKE_DEATH) {
+    // === OUTRO CUTSCENE VISUAL ===
+    if (boss->state == BOSS_OUTRO) {
         float destW = (float)BOSS_FRAME_W * boss->scale;
         float destH = (float)BOSS_FRAME_H * boss->scale;
         Rectangle src = { (float)boss->currentFrame * BOSS_FRAME_W, 0, (float)BOSS_FRAME_W, (float)BOSS_FRAME_H };
         Vector2 origin = { destW / 2.0f, destH / 2.0f };
-
-        float shX = 0, shY = 0;
-        float tilt = 0.0f;
-        Color tint = WHITE;
-        bool reviving = (boss->reviveWalkTimer > 0.0f);
-        float r = boss->reviveWalkTimer;
-
-        if (!reviving) {
-            // COLLAPSE + WAIT: xám dần rồi nằm gục nghiêng (gục lâu hơn khi đang chờ player).
-            float k = boss->fakeDeathTimer / 3.0f;
-            if (k > 1.0f) k = 1.0f;
-            unsigned char g = (unsigned char)(255 - k * 135);
-            tint = (Color){ g, g, (unsigned char)(g + 10), 255 };
-            tilt = k * 14.0f;
-        } else if (r < 2.0f) {
-            // REVIVAL: glitch nhấp nháy xám<->tím + giật ngang, dựng thẳng dần.
-            float k = r / 2.0f;
-            bool flick = ((int)(r * 30.0f)) % 2 == 0;
-            tint = flick ? (Color){ 200, 50, 255, 255 } : (Color){ 140, 130, 150, 255 };
-            shX = (float)(rand() % 16 - 8) * k;
-            shY = (float)(rand() % 10 - 5) * k;
-            tilt = 14.0f * (1.0f - k);
+        Rectangle dest = { boss->position.x, boss->position.y + cameraOffsetY, destW, destH };
+        
+        if (boss->outroTimer >= 40.5f && dissolveShaderLoaded) {
+            float pct = (boss->outroTimer - 40.5f) / 10.5f;
+            if (pct > 1.0f) pct = 1.0f;
+            float factor = powf(pct, 2.5f);
+            
+            BeginShaderMode(dissolveShader);
+            SetShaderValue(dissolveShader, dissolveFactorLoc, &factor, SHADER_UNIFORM_FLOAT);
+            DrawTexturePro(spriteSheet, src, dest, origin, 0.0f, WHITE);
+            EndShaderMode();
         } else {
-            // DECLARE: tím rực, đứng thẳng, rung nhẹ.
-            tint = (Color){ 210, 60, 255, 255 };
-            shX = (float)(rand() % 8 - 4);
-        }
-
-        Rectangle dest = { boss->position.x + shX, boss->position.y + shY + cameraOffsetY, destW, destH };
-        DrawTexturePro(spriteSheet, src, dest, origin, tilt, tint);
-
-        // WAIT: mắt chớp đỏ khi cửa thoát đang mở (tín hiệu cú lừa sắp tới).
-        if (boss->walkAwayDoorActive) {
-            float blink = (sinf((float)GetTime() * 6.0f) + 1.0f) * 0.5f;
-            float ex = boss->position.x, ey = boss->position.y - 40.0f + cameraOffsetY;
-            DrawCircleV((Vector2){ex - 26, ey}, 5.0f, (Color){255, 30, 30, (unsigned char)(blink*200)});
-            DrawCircleV((Vector2){ex + 26, ey}, 5.0f, (Color){255, 30, 30, (unsigned char)(blink*200)});
-        }
-        // REVIVAL: hào quang năng lượng tím + tia nứt quanh người.
-        if (reviving) {
-            float aura = (sinf(r * 10.0f) + 1.0f) * 0.5f;
-            DrawCircleLines((int)boss->position.x, (int)(boss->position.y + cameraOffsetY),
-                120.0f + aura * 40.0f, (Color){200, 60, 255, (unsigned char)(120 + aura*100)});
-            for (int s = 0; s < 8; s++) {
-                float a = s * (6.2831853f / 8.0f) + r * 4.0f;
-                float d1 = 60.0f, d2 = 130.0f + aura * 30.0f;
-                Vector2 p1 = { boss->position.x + cosf(a)*d1, boss->position.y + sinf(a)*d1 + cameraOffsetY };
-                Vector2 p2 = { boss->position.x + cosf(a)*d2, boss->position.y + sinf(a)*d2 + cameraOffsetY };
-                DrawLineEx(p1, p2, 2.5f, (Color){220, 120, 255, (unsigned char)(aura*200)});
-            }
+            DrawTexturePro(spriteSheet, src, dest, origin, 0.0f, WHITE);
         }
         return;
     }
@@ -1030,11 +917,25 @@ void DrawBossBody(Boss *boss, Texture2D spriteSheet, float cameraOffsetY) {
     if (boss->phase == BOSS_PHASE_3) tint = (Color){255, 100, 100, 255};
     if (boss->phase == BOSS_PHASE_4) tint = (Color){200, 50, 255, 255};  // Purple rage
 
-    // Intro fade-in
+    // Intro invisibility & black/white flashing (35s - 39s)
     if (boss->state == BOSS_INTRO) {
-        float alpha = boss->introTimer / INTRO_DURATION;
-        if (alpha > 1.0f) alpha = 1.0f;
-        tint.a = (unsigned char)(alpha * 255);
+        if (boss->introTimer < 35.0f) {
+            return; // Completely invisible
+        }
+        
+        if (boss->introTimer < 39.0f) {
+            float t = boss->introTimer - 35.0f; // 0.0f to 4.0f
+            // Phase function whose derivative (frequency) decreases from 40 to 0
+            float phase = 40.0f * (t - (t * t / 8.0f));
+            if (sinf(phase) > 0.0f) {
+                tint = (Color){0, 0, 0, 255}; // Black
+            } else {
+                tint = (Color){255, 255, 255, 255}; // White (drawn as white/grayscale)
+            }
+        } else {
+            // Normal grayscale drawing
+            tint = (Color){255, 255, 255, 255};
+        }
     }
 
     // Roar flash effect
@@ -1046,7 +947,18 @@ void DrawBossBody(Boss *boss, Texture2D spriteSheet, float cameraOffsetY) {
         }
     }
 
-    DrawTexturePro(spriteSheet, source, dest, origin, 0.0f, tint);
+    if (glowShaderLoaded && glowShader.id > 0) {
+        BeginShaderMode(glowShader);
+        float color[4] = { 0.55f, 0.12f, 0.78f, 1.00f }; // Màu tím đậm đà quyến rũ
+        float radius = 7.0f; // Bán kính hào quang tỏa ra
+        SetShaderValue(glowShader, glowColorLoc, color, SHADER_UNIFORM_VEC4);
+        SetShaderValue(glowShader, glowRadiusLoc, &radius, SHADER_UNIFORM_FLOAT);
+
+        DrawTexturePro(spriteSheet, source, dest, origin, 0.0f, tint);
+        EndShaderMode();
+    } else {
+        DrawTexturePro(spriteSheet, source, dest, origin, 0.0f, tint);
+    }
 
     // --- Draw Taunt Text (above boss) ---
     if (boss->tauntTimer > 0 && boss->state == BOSS_FIGHTING) {
@@ -1086,6 +998,7 @@ void DrawBossSkills(Boss *boss) {
     // --- Draw Animated Statues ---
     for (int i = 0; i < boss->mapStatueCount; i++) {
         MapStatue *s = &boss->mapStatues[i];
+
         float cx = s->hitbox.x + s->hitbox.width / 2.0f;
         float cy = s->hitbox.y + s->hitbox.height / 2.0f;
         float hw = s->hitbox.width;
@@ -1298,28 +1211,11 @@ void DrawBoss(Boss *boss, Texture2D spriteSheet, float cameraOffsetY) {
 }
 
 void BossTakeDamage(Boss *boss, int damage) {
-    // Trong TRUE_ENRAGE: chỉ cần trúng 1 phát parry là chết thật.
-    if (boss->state == BOSS_TRUE_ENRAGE) {
-        boss->hp = 0;
-        boss->state = BOSS_DYING;
-        boss->shakeTimer = 0.5f;
-        boss->shakeIntensity = 40.0f;
-        return;
-    }
-
     boss->hp -= damage;
     if (boss->hp <= 0) {
         boss->hp = 0;
-        if (!boss->fakeDeathDone) {
-            // === CÚ LỪA GIẢ CHẾT (Dylan twist) ===
-            // Lần đầu HP=0 KHÔNG chết — chuyển sang giả chết, sẽ hồi sinh 1 HP.
-            boss->fakeDeathDone = true;
-            boss->state = BOSS_FAKE_DEATH;
-            boss->fakeDeathTimer = 0.0f;
-        } else {
-            // Đã qua màn giả chết (đang ở TRUE_ENRAGE đã xử lý ở trên) — chết thật.
-            boss->state = BOSS_DYING;
-        }
+        boss->state = BOSS_OUTRO;
+        boss->outroTimer = 0.0f;
     }
     boss->shakeTimer = 0.3f;
     boss->shakeIntensity = 30.0f;

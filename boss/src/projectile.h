@@ -26,5 +26,6 @@ void SpawnProjectile(ProjectileManager *pm, Vector2 pos, Vector2 vel, int damage
 void UpdateProjectiles(ProjectileManager *pm, float dt);
 void DrawProjectiles(ProjectileManager *pm);
 void UnloadProjectileAssets(void);
+Texture2D GetOrbDamageTexture(void);
 
 #endif // PROJECTILE_H

@@ -8,25 +8,30 @@
 3. **Flatten Group**: Hàm `ProcessLayers()` trong `game.c` flatten tất cả group layers
 4. **Kết quả**: Layers được vẽ theo đúng thứ tự Z-order từ dưới lên trên
 
-## Thứ tự vẽ cuối cùng (từ dưới lên trên):
+## Thứ tự vẽ và tỷ lệ Parallax (từ xa tới gần):
 
-### Background Layers (parallax)
-1. **sky** (objectgroup) - Background trời, parallax 0.5
-2. **mountain** (objectgroup) - Background núi, parallax 0.8
+### 1. Rất xa (Parallax factor: 0.3)
+- **sky** (objectgroup) - Bầu trời ngoài cùng, cuộn cực kỳ chậm theo camera.
 
-### Main Layers (từ Group Layer 1)
-3. **fence** (tilelayer) - Hàng rào
-4. **building** (objectgroup) - Tòa nhà
-5. **tiles2** (tilelayer) - Tiles phụ, offsety: 50
-6. **statue** (objectgroup) - Tượng, offsety: 50
-7. **black** (objectgroup) - Overlay đen (opacity 0.15)
-8. **abc** (objectgroup) - Object đặc biệt (boss/NPC?)
-9. **tiles** (tilelayer) - Tiles chính, offsety: 50
-10. **props** (tilelayer) - Props/decoration, offsety: 50
-11. **ground** (objectgroup) ⭐ - **KHÔNG VẼ** - chỉ dùng collision!
+### 2. Xa (Parallax factor: 0.6)
+- **mountain** (objectgroup) - Núi đồi phía sau, cuộn chậm.
 
-### Player Layer
-12. **Player** - Vẽ sau tất cả layers
+### 3. Trung cảnh / Mặc định (Parallax factor: 1.0)
+- **fence** (tilelayer) - Hàng rào.
+- **building** (objectgroup) - Các tòa nhà.
+- **black** (objectgroup) - Lớp phủ tối.
+- **abc** (objectgroup) - Các đối tượng đặc biệt.
+- **tiles** (tilelayer) - Nền đất chính.
+- **props** (tilelayer) - Các chi tiết trang trí tiền cảnh.
+
+### 4. Gần / Cận cảnh (Parallax factor: 0.9)
+- **tiles2** (tilelayer) - Các mảng nền đất phụ.
+- **statue** (objectgroup) - Các bức tượng đá.
+
+### 5. Player & Boss Layers
+- **Player** & **Boss** - Vẽ tương tác trực tiếp theo tọa độ thế giới (Parallax factor: 1.0).
+
+### 6. ground (objectgroup) ⭐ - **KHÔNG VẼ** - chỉ dùng tính toán va chạm vật lý!
 
 ## Layer "ground" - Collision Only
 

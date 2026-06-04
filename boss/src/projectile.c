@@ -98,6 +98,14 @@ void DrawProjectiles(ProjectileManager *pm) {
     }
 }
 
+Texture2D GetOrbDamageTexture(void) {
+    if (!orbDamageLoaded) {
+        orbDamageTex = LoadTexture(GetBossAssetPath("assets/effects/vfx/orbdamage/sprite-sheet.png"));
+        orbDamageLoaded = true;
+    }
+    return orbDamageTex;
+}
+
 void UnloadProjectileAssets(void) {
     if (orbDamageLoaded) {
         UnloadTexture(orbDamageTex);

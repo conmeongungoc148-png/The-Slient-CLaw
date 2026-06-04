@@ -227,6 +227,38 @@ void UpdateBooms(Boss *boss, Vector2 playerPos, OrbManager *om, float dt) {
     (void)om;
     int phase = (int)boss->phase;
 
+    // During intro sequence (0-15s): sequentially spawn booms
+    if (boss->state == BOSS_INTRO) {
+        float t = boss->introTimer;
+        // 0.0s - 5.0s: Left boom BOOM_START, others GONE
+        if (t < 5.0f) {
+            if (boss->booms[0].state == BOOM_GONE) {
+                boss->booms[0].state = BOOM_START;
+                boss->booms[0].currentFrame = 0;
+                boss->booms[0].animTimer = 0.0f;
+            }
+            boss->booms[1].state = BOOM_GONE;
+            boss->booms[2].state = BOOM_GONE;
+        }
+        // 5.0s - 10.0s: Right boom BOOM_START, Left boom updates, Center GONE
+        else if (t < 10.0f) {
+            if (boss->booms[2].state == BOOM_GONE) {
+                boss->booms[2].state = BOOM_START;
+                boss->booms[2].currentFrame = 0;
+                boss->booms[2].animTimer = 0.0f;
+            }
+            boss->booms[1].state = BOOM_GONE;
+        }
+        // 10.0s - 15.0s: Center boom BOOM_START, Left and Right update
+        else if (t < 15.0f) {
+            if (boss->booms[1].state == BOOM_GONE) {
+                boss->booms[1].state = BOOM_START;
+                boss->booms[1].currentFrame = 0;
+                boss->booms[1].animTimer = 0.0f;
+            }
+        }
+    }
+
     // Check if any major boss skill is active to pause automatic boom node attacks
     bool bossSkillActive = boss->laserActive || boss->slamActive || boss->clawActive || boss->rainActive;
     for (int h = 0; h < boss->hazardCount; h++) {
@@ -236,9 +268,13 @@ void UpdateBooms(Boss *boss, Vector2 playerPos, OrbManager *om, float dt) {
         }
     }
     bool anySkillIsActive = bossSkillActive || boss->boomLaserSkillActive;
+
+    // Pause boom attacks during freeze stage (35s - 41.5s) or early intro (0 - 15s)
+    bool isBoomAttackPaused = (boss->state == BOSS_INTRO && (boss->introTimer < 15.0f || (boss->introTimer >= 35.0f && boss->introTimer < 41.5f)));
+
     if (boss->phaseHitFlash > 0) boss->phaseHitFlash -= dt;
 
-    if (boss->boomLaserSkillActive) {
+    if (boss->boomLaserSkillActive && !isBoomAttackPaused) {
         boss->boomSkillTimer -= dt;
         if (boss->boomSkillTimer <= 0.0f) {
             boss->boomLaserSkillActive = false;
@@ -269,6 +305,10 @@ void UpdateBooms(Boss *boss, Vector2 playerPos, OrbManager *om, float dt) {
             if (b->animTimer >= BOOM_FRAME_TIME) {
                 b->animTimer = 0.0f;
                 b->currentFrame = (b->currentFrame + 1) % BOOM_LOOP_FRAMES;
+            }
+ 
+            if (isBoomAttackPaused) {
+                continue;
             }
  
             bool isMiddle = (i == 1);

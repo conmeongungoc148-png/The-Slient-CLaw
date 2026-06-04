@@ -81,8 +81,7 @@ typedef enum {
     BOSS_INTRO,         // Boss đang xuất hiện từ dưới lên
     BOSS_ROAR,          // Boss hét + screen shake
     BOSS_FIGHTING,      // Đang chiến đấu
-    BOSS_FAKE_DEATH,    // HP=0 lần đầu: GIẢ CHẾT (cú lừa kiểu Dylan)
-    BOSS_TRUE_ENRAGE,   // Hồi sinh 1 HP + bullet hell, parry orb cuối = kết liễu thật
+    BOSS_OUTRO,         // Cutscene kết thúc mới (chờ xử lý)
     BOSS_DYING,         // HP=0 thật, đứng yên chờ nhạc ending phát hết
     BOSS_DEFEATED       // Sau khi ending hết: explosion + fade
 } BossState;
@@ -193,9 +192,17 @@ typedef struct {
     float atomTimer;        // Animation atom bomb sau khi trigger (visual)
     bool atomTriggered;     // Đã trigger atom chưa
 
-    // Fake-death twist (kiểu Dylan): HP=0 lần đầu không chết, hồi sinh 1 HP
-    bool fakeDeathDone;     // Đã dùng cú lừa giả chết chưa
-    float fakeDeathTimer;   // Timeline cho chuỗi giả chết
+    // Outro cutscene fields
+    float outroTimer;       // Timer cho cutscene kết thúc mới
+    Vector2 outroRedOrbPos;
+    float outroRedOrbRadius;
+    bool outroRedOrbActive;
+    Vector2 outroYellowOrbPos;
+    float outroYellowOrbRadius;
+    bool outroYellowOrbActive;
+    Vector2 outroYellowOrbVel;
+    float outroAuraScale;
+    bool outroAuraActive;
 
     // Pre-intro cutscene fields
     float preIntroLightProgress; // 0.0f (dark) to 1.0f (fully lit)
@@ -209,8 +216,7 @@ typedef struct {
     float boomStaggerTimer;      // spawn orb vàng (để parry) cách nhau 30-45s
     float boomNextOrbDelay;      // delay ngẫu nhiên hiện tại
     float phaseHitFlash;         // >0: boss vừa "dính sát thương" sau khi phá đủ 3 boom
-    bool walkAwayDoorActive;     // (cutscene) cửa thoát đang hiện cho player đi ra
-    float reviveWalkTimer;       // (cutscene) đếm thời gian giai đoạn đi ra cửa
+    float ringShockwaveTimer;    // Timer cho shader sóng xung kích
 
     // Skill sequencing & special laser logic
     AttackType skillRoundType;

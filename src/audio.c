@@ -239,7 +239,7 @@ void Audio_LoadBossAssets(void) {
     // Load subtitle files
     // Subtract 3603.716f to shift 01:00:04,726 to exactly 1.01 seconds
     LoadSRT("boss/assets/audio/music/boss_subtitle 1.srt", sub1, &sub1Count, 3603.716f);
-    LoadSRT("boss/assets/audio/music/boss_subtitle 2.srt", sub2, &sub2Count, 3600.0f);
+    LoadSRT("boss/assets/audio/music/boss_subtitle 2.srt", sub2, &sub2Count, 3603.773f);
     
     activeSubs = sub1;
     activeSubCount = sub1Count;
@@ -321,38 +321,26 @@ void Audio_Update(float dt, Boss *boss) {
         endingMusicTimer += dt;
     }
     
-    if (boss->state == BOSS_DYING) {
-        float timePlayed = bgmTimer;
-        float totalLength = fight1MusicLoaded ? GetMusicTimeLength(fight1Music) : 0.0f;
-        if (totalLength == 0.0f) totalLength = 430.0f; // fallback duration
-        
-        // Case 2: Early victory (if music is still playing and not yet finished)
-        if (fight1MusicLoaded && timePlayed < totalLength - 1.0f) {
+    if (boss->state == BOSS_OUTRO && !playEndingMusic) {
+        if (fight1MusicLoaded) {
             StopMusicStream(fight1Music);
             bgmTimerActive = false;
-            
-            if (FileExists("boss/assets/audio/music/fight2.mov")) {
-                if (!videoLaunched) {
-                    CopySubtitleFile();
-                    LaunchVideo();
-                    videoLaunched = true;
-                }
-            } else if (fight2MusicLoaded && !playEndingMusic) {
-                // Switch to playing fight2.ogg internally
-                activeSubs = sub2;
-                activeSubCount = sub2Count;
-                PlayMusicStream(fight2Music);
-                playEndingMusic = true;
-                endingMusicTimer = 0.0f;
-                TraceLog(LOG_INFO, "BGM: Playing fight2 ending music internally");
+        }
+        
+        if (FileExists("boss/assets/audio/music/fight2.mov")) {
+            if (!videoLaunched) {
+                CopySubtitleFile();
+                LaunchVideo();
+                videoLaunched = true;
             }
-            
-            boss->defeated = true;
-            boss->state = BOSS_DEFEATED;
-        } else {
-            // Case 1: Music finished naturally
-            boss->defeated = true;
-            boss->state = BOSS_DEFEATED;
+        } else if (fight2MusicLoaded) {
+            // Switch to playing fight2.ogg internally
+            activeSubs = sub2;
+            activeSubCount = sub2Count;
+            PlayMusicStream(fight2Music);
+            playEndingMusic = true;
+            endingMusicTimer = 0.0f;
+            TraceLog(LOG_INFO, "BGM: Playing fight2 ending music internally during outro");
         }
     }
 }

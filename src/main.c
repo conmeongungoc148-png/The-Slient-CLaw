@@ -145,6 +145,11 @@ void GetMapBackgroundBounds(GameMap *map, float *minX, float *maxX, float *minY,
 
 Font gGameFont;
 
+static BossPlayer outroFakeCat;
+static bool outroFakeCatActive = false;
+static float outroFakeCatAlpha = 1.0f;
+static float outroFlashTimer = 0.0f;
+
 int main(void) {
   setvbuf(stdout, NULL, _IONBF, 0);
   InitWindow(SCREEN_WIDTH, SCREEN_HEIGHT,
@@ -157,6 +162,12 @@ int main(void) {
 
   RenderTexture2D target = LoadRenderTexture(VIRTUAL_WIDTH, VIRTUAL_HEIGHT);
   SetTextureFilter(target.texture, TEXTURE_FILTER_POINT);
+
+  Shader grayscaleShader = LoadShader(0, "assets/grayscale.fs");
+  Shader shockwaveShader = LoadShader(0, "assets/shockwave.fs");
+  int swCenterLoc = GetShaderLocation(shockwaveShader, "center");
+  int swTimeLoc = GetShaderLocation(shockwaveShader, "time");
+  int swParamsLoc = GetShaderLocation(shockwaveShader, "shockParams");
 
   const char *mapList[] = {
       "boss/assets/forestmap.tmj",
@@ -214,27 +225,19 @@ int main(void) {
                 if (boss.state == BOSS_FIGHTING) {
                     boss.boomsRemaining = 0;
                     TraceLog(LOG_INFO, "CHEAT: Skipped fight phase!");
-                } else if (boss.state == BOSS_FAKE_DEATH) {
-                    if (boss.walkAwayDoorActive) {
-                        bossPlayer.position.x = 1065.0f; // trigger revival walk
-                    } else {
-                        boss.reviveWalkTimer = 3.6f; // jump directly to TRUE_ENRAGE
-                    }
-                    TraceLog(LOG_INFO, "CHEAT: Skipped fake death sequence!");
-                } else if (boss.state == BOSS_TRUE_ENRAGE) {
-                    BossTakeDamage(&boss, 1);
-                    TraceLog(LOG_INFO, "CHEAT: Defeated boss enrage phase!");
+                } else if (boss.state == BOSS_OUTRO) {
+                    boss.outroTimer = 999.0f; // skip outro cutscene
+                    TraceLog(LOG_INFO, "CHEAT: Skipped outro cutscene!");
                 }
             }
 
-            // Đi-bộ-only: pre-intro HOẶC giai đoạn đi ra cửa (boss giả chết, cửa mở).
-            gPreIntroSlowWalk = (boss.state == BOSS_PRE_INTRO) ||
-                                (boss.state == BOSS_FAKE_DEATH && boss.walkAwayDoorActive);
+            // Đi-bộ-only: pre-intro
+            gPreIntroSlowWalk = (boss.state == BOSS_PRE_INTRO);
             static float activeCameraShake = 0.0f;
             float bossCameraShake = 0.0f;
             UpdateBoss(&boss, bossPlayer.position, &pm, &om, dt, &bossCameraShake);
             
-            bool bossSetsShakeEveryFrame = (boss.state == BOSS_INTRO) || (boss.state == BOSS_ROAR) || (boss.state == BOSS_FAKE_DEATH) || (boss.state == BOSS_DYING);
+            bool bossSetsShakeEveryFrame = (boss.state == BOSS_INTRO) || (boss.state == BOSS_ROAR) || (boss.state == BOSS_OUTRO) || (boss.state == BOSS_DYING);
             if (bossSetsShakeEveryFrame) {
                 activeCameraShake = bossCameraShake;
             } else {
@@ -253,7 +256,9 @@ int main(void) {
             }
             
             // Player update logic (with lock check)
-            bool isPlayerLocked = (boss.state == BOSS_PRE_INTRO && boss.preIntroTriggered) || (boss.state == BOSS_INTRO) || (boss.state == BOSS_ROAR);
+            bool isPlayerLocked = (boss.state == BOSS_PRE_INTRO && boss.preIntroTriggered) || (boss.state == BOSS_ROAR);
+            if (boss.state == BOSS_INTRO && (boss.introTimer < 15.0f || boss.introTimer >= 35.0f)) isPlayerLocked = true;
+            if (boss.state == BOSS_OUTRO) isPlayerLocked = true;
 
             if (isPlayerLocked) {
                 bossPlayer.velocity = (Vector2){0, 0};
@@ -263,7 +268,13 @@ int main(void) {
                 bossPlayer.isSprinting = false;
                 bossPlayer.isAttacking = false;
                 bossPlayer.isHurt = false;
-                bossPlayer.position.x = boss.beaconPos.x;
+                if (boss.state == BOSS_OUTRO) {
+                    bossPlayer.position.x = 550.0f;
+                    bossPlayer.facingRight = true;
+                } else {
+                    bossPlayer.position.x = boss.beaconPos.x;
+                }
+                bossPlayer.position.y = 419.0f; // Force player to ground level during cinematic lock
                 bossPlayer.frameTimer += dt;
                 if (bossPlayer.frameTimer >= 0.12f) {
                     bossPlayer.frameTimer = 0.0f;
@@ -272,25 +283,14 @@ int main(void) {
                 bossPlayer.hurtBox.x = bossPlayer.position.x - 10;
                 bossPlayer.hurtBox.y = bossPlayer.position.y - 30;
             } else {
-                if (boss.state == BOSS_PRE_INTRO || boss.state == BOSS_FIGHTING ||
-                    boss.state == BOSS_TRUE_ENRAGE ||
-                    (boss.state == BOSS_FAKE_DEATH && boss.walkAwayDoorActive)) {
+                if (boss.state == BOSS_PRE_INTRO || boss.state == BOSS_INTRO || boss.state == BOSS_FIGHTING || boss.state == BOSS_OUTRO) {
                     UpdateBossPlayerOnMap(&bossPlayer, cuteBossMap, 0.0f, 419.0f, dt);
                     bossPlayer.hurtBox.x = bossPlayer.position.x - 10;
                     bossPlayer.hurtBox.y = bossPlayer.position.y - 30;
                 }
             }
 
-            // === ĐI RA CỬA: player tới mép phải (gần cửa) -> boss bất ngờ trồi lên ===
-            if (boss.state == BOSS_FAKE_DEATH && boss.walkAwayDoorActive) {
-                if (bossPlayer.position.x >= 1060.0f) {
-                    boss.walkAwayDoorActive = false;
-                    boss.reviveWalkTimer = 0.0001f;  // bật giai đoạn REVIVAL
-                    Audio_PlaySFX(SFX_LAUGH);
-                }
-            }
-
-            if (boss.state == BOSS_FIGHTING || boss.state == BOSS_TRUE_ENRAGE) {
+            if (boss.state == BOSS_FIGHTING) {
                 UpdateProjectiles(&pm, dt);
                 UpdateOrbs(&om, bossPlayer.position, boss.position, 419.0f, dt);
                 
@@ -345,11 +345,9 @@ int main(void) {
                         wasReady[i] = (om.orbs[i].state == ORB_READY);
                     }
                     Vector2 orbTarget = boss.position;
-                    if (boss.state != BOSS_TRUE_ENRAGE) {
-                        int bi = BoomNearestActive(&boss, bossPlayer.position);
-                        if (bi >= 0) {
-                            orbTarget = boss.booms[bi].position;
-                        }
+                    int bi = BoomNearestActive(&boss, bossPlayer.position);
+                    if (bi >= 0) {
+                        orbTarget = boss.booms[bi].position;
                     }
                     TryCatchOrb(&om, bossPlayer.hurtBox, orbTarget);
                     for (int i = 0; i < MAX_ORBS; i++) {
@@ -369,26 +367,16 @@ int main(void) {
                     }
                 }
 
-                // Parry orb (RETURNING) — trong FIGHTING đập vào CỤC BOOM gần nhất;
-                // trong TRUE_ENRAGE thì trúng boss = kết liễu thật.
                 for (int i = 0; i < MAX_ORBS; i++) {
                     if (om.orbs[i].state != ORB_RETURNING) continue;
-                    if (boss.state == BOSS_TRUE_ENRAGE) {
-                        if (CheckCollision(om.orbs[i].hitbox, boss.hurtBox)) {
-                            BossTakeDamage(&boss, om.orbs[i].damage);
+                    int bi = BoomNearestActive(&boss, om.orbs[i].position);
+                    if (bi >= 0) {
+                        float dx = boss.booms[bi].position.x - om.orbs[i].position.x;
+                        float dy = boss.booms[bi].position.y - om.orbs[i].position.y;
+                        if (dx*dx + dy*dy < 70.0f*70.0f) {
+                            BoomHit(&boss, bi);
                             Audio_PlaySFX(SFX_DAMAGE);
                             om.orbs[i].state = ORB_INACTIVE;
-                        }
-                    } else {
-                        int bi = BoomNearestActive(&boss, om.orbs[i].position);
-                        if (bi >= 0) {
-                            float dx = boss.booms[bi].position.x - om.orbs[i].position.x;
-                            float dy = boss.booms[bi].position.y - om.orbs[i].position.y;
-                            if (dx*dx + dy*dy < 70.0f*70.0f) {
-                                BoomHit(&boss, bi);
-                                Audio_PlaySFX(SFX_DAMAGE);
-                                om.orbs[i].state = ORB_INACTIVE;
-                            }
                         }
                     }
                 }
@@ -428,6 +416,108 @@ int main(void) {
             } else {
                 Audio_StopSFX(SFX_ALARM);
             }
+            
+            if (boss.state == BOSS_OUTRO) {
+                float t = boss.outroTimer;
+                if (t < 5.0f) {
+                    boss.outroRedOrbActive = true;
+                    boss.outroRedOrbPos.x = boss.position.x;
+                    boss.outroRedOrbPos.y = boss.position.y - 120.0f - (t / 5.0f) * 40.0f;
+                    boss.outroRedOrbRadius = (t / 5.0f) * 100.0f;
+                } else if (t < 10.0f) {
+                    boss.outroRedOrbActive = true;
+                    boss.outroRedOrbPos.x = boss.position.x;
+                    boss.outroRedOrbPos.y = boss.position.y - 160.0f;
+                    boss.outroRedOrbRadius = 100.0f;
+                }
+                
+                if (t >= 10.0f && t < 10.1f && !outroFakeCatActive) {
+                    InitBossPlayer(&outroFakeCat, (Vector2){1000.0f, 419.0f}, 419.0f);
+                    outroFakeCat.facingRight = false;
+                    outroFakeCat.state = PSTATE_WALK;
+                    outroFakeCatActive = true;
+                    outroFakeCatAlpha = 1.0f;
+                    boss.outroYellowOrbActive = true;
+                    boss.outroYellowOrbRadius = 15.0f;
+                    boss.outroYellowOrbVel = (Vector2){0, 0};
+                }
+                
+                if (t >= 10.0f) {
+                    if (t < 13.5f) {
+                        outroFakeCat.position.x -= dt * 100.0f;
+                        outroFakeCat.state = PSTATE_WALK;
+                        outroFakeCat.frameTimer += dt;
+                        if (outroFakeCat.frameTimer >= 0.08f) {
+                            outroFakeCat.frameTimer = 0;
+                            outroFakeCat.currentFrame = (outroFakeCat.currentFrame + 1) % 12;
+                        }
+                        boss.outroYellowOrbPos = (Vector2){ outroFakeCat.position.x + 10.0f, outroFakeCat.position.y - 15.0f };
+                    } else if (t < 14.5f) {
+                        outroFakeCat.state = PSTATE_IDLE;
+                        outroFakeCat.frameTimer += dt;
+                        if (outroFakeCat.frameTimer >= 0.12f) {
+                            outroFakeCat.frameTimer = 0;
+                            outroFakeCat.currentFrame = (outroFakeCat.currentFrame + 1) % 10;
+                        }
+                        float t_slide = (t - 13.5f) / 1.0f;
+                        Vector2 startPos = { outroFakeCat.position.x + 10.0f, outroFakeCat.position.y - 15.0f };
+                        Vector2 endPos = { outroFakeCat.position.x - 20.0f, 419.0f };
+                        boss.outroYellowOrbPos.x = startPos.x + (endPos.x - startPos.x) * t_slide;
+                        boss.outroYellowOrbPos.y = startPos.y + (endPos.y - startPos.y) * t_slide;
+                    } else if (t < 15.3f) {
+                        if (outroFakeCat.state != PSTATE_ATTACK) {
+                            outroFakeCat.state = PSTATE_ATTACK;
+                            outroFakeCat.currentFrame = 0;
+                            outroFakeCat.frameTimer = 0.0f;
+                        }
+                        outroFakeCat.frameTimer += dt;
+                        if (outroFakeCat.frameTimer >= 0.10f) {
+                            outroFakeCat.frameTimer = 0;
+                            outroFakeCat.currentFrame = (outroFakeCat.currentFrame + 1) % 8;
+                        }
+                        if (t >= 15.0f && boss.outroYellowOrbVel.x == 0.0f) {
+                            Audio_PlaySFX(SFX_SLASH);
+                            Vector2 dir = { boss.outroRedOrbPos.x - boss.outroYellowOrbPos.x, boss.outroRedOrbPos.y - boss.outroYellowOrbPos.y };
+                            float len = sqrtf(dir.x * dir.x + dir.y * dir.y);
+                            boss.outroYellowOrbVel.x = (dir.x / len) * 600.0f;
+                            boss.outroYellowOrbVel.y = (dir.y / len) * 600.0f;
+                        }
+                    } else {
+                        outroFakeCat.state = PSTATE_IDLE;
+                        outroFakeCat.frameTimer += dt;
+                        if (outroFakeCat.frameTimer >= 0.12f) {
+                            outroFakeCat.frameTimer = 0;
+                            outroFakeCat.currentFrame = (outroFakeCat.currentFrame + 1) % 10;
+                        }
+                    }
+                    
+                    if (boss.outroYellowOrbVel.x != 0.0f && boss.outroYellowOrbActive) {
+                        boss.outroYellowOrbPos.x += boss.outroYellowOrbVel.x * dt;
+                        boss.outroYellowOrbPos.y += boss.outroYellowOrbVel.y * dt;
+                        float dx = boss.outroYellowOrbPos.x - boss.outroRedOrbPos.x;
+                        float dy = boss.outroYellowOrbPos.y - boss.outroRedOrbPos.y;
+                        if (sqrtf(dx*dx + dy*dy) < boss.outroRedOrbRadius) {
+                            boss.ringShockwaveTimer = 0.01f;
+                            boss.outroAuraActive = true;
+                            boss.outroAuraScale = 0.0f;
+                            boss.outroYellowOrbActive = false;
+                            boss.outroRedOrbActive = false;
+                            Audio_PlaySFX(SFX_DAMAGE);
+                            outroFlashTimer = 1.5f;
+                        }
+                    }
+                    
+                    if (outroFlashTimer > 0.0f) {
+                        outroFlashTimer -= dt;
+                        if (outroFlashTimer < 0.0f) outroFlashTimer = 0.0f;
+                    }
+                    
+                    if (boss.outroAuraActive) {
+                        boss.outroAuraScale += dt * 3.0f;
+                        if (boss.outroAuraScale > 2.0f) boss.outroAuraActive = false;
+                    }
+                }
+            }
 
             // Boundaries
             if (bossPlayer.position.x < 30) bossPlayer.position.x = 30;
@@ -440,7 +530,7 @@ int main(void) {
             if (IsKeyPressed(KEY_R)) {
                 // Reset boss fight
                 InitBossPlayer(&bossPlayer, (Vector2){200.0f, 419.0f}, 419.0f);
-                InitBoss(&boss, (Vector2){bossTargetPos.x, bossTargetPos.y + 680.0f}, bossTargetPos);
+                InitBoss(&boss, bossTargetPos, bossTargetPos);
                 boss.scale = 3.7f;
                 InitProjectileManager(&pm);
                 InitOrbManager(&om);
@@ -508,7 +598,7 @@ int main(void) {
 
             bossTargetPos = FindBossPosition(&gameMap, (Vector2){608.0f, 220.0f});
             InitBossPlayer(&bossPlayer, (Vector2){200.0f, 419.0f}, 419.0f);
-            InitBoss(&boss, (Vector2){bossTargetPos.x, bossTargetPos.y + 680.0f}, bossTargetPos);
+            InitBoss(&boss, bossTargetPos, bossTargetPos);
             boss.scale = 3.7f;
             InitProjectileManager(&pm);
             InitOrbManager(&om);
@@ -560,18 +650,44 @@ int main(void) {
                 CameraUpdate(&myCam, targetPos, dt);
             }
             else if (boss.state == BOSS_INTRO) {
-                float progress = boss.introTimer / 15.5f;
-                if (progress > 1.0f) progress = 1.0f;
+                float targetZoom = 1.13f; // base zoom out for arena
+                Vector2 targetPos;
                 
-                float targetZoom = 2.2f - 1.07f * progress; // Smoothly zoom out from 2.2f to 1.13f
+                if (boss.introTimer < 5.0f) {
+                    targetPos = (Vector2){390.0f, 250.0f}; // Left Boom Node
+                    targetZoom = 1.50f;
+                } else if (boss.introTimer < 10.0f) {
+                    targetPos = (Vector2){890.0f, 250.0f}; // Right Boom Node
+                    targetZoom = 1.50f;
+                } else if (boss.introTimer < 15.0f) {
+                    targetPos = (Vector2){640.0f, 200.0f}; // Center Boom Node
+                    targetZoom = 1.50f;
+                } else if (boss.introTimer < 35.0f) {
+                    targetPos = (Vector2){ bossPlayer.position.x, bossPlayer.position.y - 50.0f }; // Player
+                } else {
+                    targetPos = (Vector2){608.0f, 220.0f}; // Boss focus
+                    targetZoom = 1.4f;
+                }
+                
                 myCam.zoom += (targetZoom - myCam.zoom) * 2.0f * dt;
-                
-                Vector2 targetPos = boss.position;
                 CameraUpdate(&myCam, targetPos, dt);
             }
             else if (boss.state == BOSS_ROAR) {
                 myCam.zoom += (1.45f - myCam.zoom) * 3.0f * dt;
                 Vector2 targetPos = boss.position;
+                CameraUpdate(&myCam, targetPos, dt);
+            }
+            else if (boss.state == BOSS_OUTRO) {
+                float targetZoom = 0.95f;
+                Vector2 targetPos = { bossPlayer.position.x, bossPlayer.position.y - 70.0f };
+                if (boss.outroTimer < 5.0f) {
+                    targetZoom = 1.8f;
+                    targetPos = boss.outroRedOrbPos;
+                } else if (boss.outroTimer < 15.0f) {
+                    targetZoom = 1.8f;
+                    targetPos = (Vector2){ bossPlayer.position.x, bossPlayer.position.y - 50.0f };
+                }
+                myCam.zoom += (targetZoom - myCam.zoom) * 2.0f * dt;
                 CameraUpdate(&myCam, targetPos, dt);
             }
             else {
@@ -630,41 +746,46 @@ int main(void) {
 
     if (currentMapIndex == 2 && bossInitialized) {
         // === MAP 3 (BOSS FIGHT): 2-pass rendering for correct Z-order ===
-        // Pass 1.1: Sky layers
-        for (int i = 0; i < gameMap.layerCount; i++) {
-            TMJLayer *layer = &gameMap.layers[i];
-            if (!layer->visible || strstr(layer->name, "sky") == NULL) continue;
-            if (strcmp(layer->type, "tilelayer") == 0 && layer->data != NULL) {
-                for (int y = 0; y < layer->height; y++) {
-                    for (int x = 0; x < layer->width; x++) {
-                        int gid = layer->data[y * layer->width + x];
-                        if (gid == 0) continue;
-                        int tsIdx = -1;
-                        for (int k = gameMap.tilesetCount - 1; k >= 0; k--) {
-                            if (gid >= gameMap.tilesets[k].firstgid) { tsIdx = k; break; }
-                        }
-                        if (tsIdx != -1 && gameMap.tilesets[tsIdx].texture.id != 0) {
-                            TMJTileset *ts = &gameMap.tilesets[tsIdx];
-                            int localId = gid - ts->firstgid;
-                            int tx = ts->margin + (localId % ts->columns) * (ts->tileWidth + ts->spacing);
-                            int ty = ts->margin + (localId / ts->columns) * (ts->tileHeight + ts->spacing);
-                            Rectangle source = { (float)tx, (float)ty, (float)ts->tileWidth, (float)ts->tileHeight };
-                            Vector2 pos = { (float)x * gameMap.tileWidth + layer->offsetx, (float)y * gameMap.tileHeight + layer->offsety };
-                            DrawTextureRec(ts->texture, source, pos, WHITE);
+        // Pass 1.1: Sky layers (rất xa - parallax factor 0.3, horizontal + vertical, centered relative to map center 608.0f, 419.0f)
+        float skyParallaxX = (myCam.rl.target.x - 608.0f) * (1.0f - 0.3f);
+        float skyParallaxY = (myCam.rl.target.y - 419.0f) * (1.0f - 0.3f);
+        for (int repeat = -1; repeat <= 1; repeat++) {
+            float extraX = repeat * 1152.0f; // Sky segment repetition step
+            for (int i = 0; i < gameMap.layerCount; i++) {
+                TMJLayer *layer = &gameMap.layers[i];
+                if (!layer->visible || strstr(layer->name, "sky") == NULL) continue;
+                if (strcmp(layer->type, "tilelayer") == 0 && layer->data != NULL) {
+                    for (int y = 0; y < layer->height; y++) {
+                        for (int x = 0; x < layer->width; x++) {
+                            int gid = layer->data[y * layer->width + x];
+                            if (gid == 0) continue;
+                            int tsIdx = -1;
+                            for (int k = gameMap.tilesetCount - 1; k >= 0; k--) {
+                                if (gid >= gameMap.tilesets[k].firstgid) { tsIdx = k; break; }
+                            }
+                            if (tsIdx != -1 && gameMap.tilesets[tsIdx].texture.id != 0) {
+                                TMJTileset *ts = &gameMap.tilesets[tsIdx];
+                                int localId = gid - ts->firstgid;
+                                int tx = ts->margin + (localId % ts->columns) * (ts->tileWidth + ts->spacing);
+                                int ty = ts->margin + (localId / ts->columns) * (ts->tileHeight + ts->spacing);
+                                Rectangle source = { (float)tx, (float)ty, (float)ts->tileWidth, (float)ts->tileHeight };
+                                Vector2 pos = { (float)x * gameMap.tileWidth + layer->offsetx + skyParallaxX + extraX, (float)y * gameMap.tileHeight + layer->offsety + skyParallaxY };
+                                DrawTextureRec(ts->texture, source, pos, WHITE);
+                            }
                         }
                     }
                 }
-            }
-            if (strcmp(layer->type, "objectgroup") == 0) {
-                for (int j = 0; j < layer->objectCount; j++) {
-                    TMJObject *obj = &layer->objects[j];
-                    if (!obj->visible || obj->texture.id == 0) continue;
-                    Rectangle source = {0, 0, (float)obj->texture.width, (float)obj->texture.height};
-                    if (obj->flipX) source.width = -source.width;
-                    if (obj->flipY) source.height = -source.height;
-                    Rectangle dest = {obj->x + layer->offsetx, obj->y + layer->offsety, obj->width, obj->height};
-                    Vector2 origin = {0, obj->height};
-                    DrawTexturePro(obj->texture, source, dest, origin, obj->rotation, Fade(WHITE, layer->opacity * obj->opacity));
+                if (strcmp(layer->type, "objectgroup") == 0) {
+                    for (int j = 0; j < layer->objectCount; j++) {
+                        TMJObject *obj = &layer->objects[j];
+                        if (!obj->visible || obj->texture.id == 0) continue;
+                        Rectangle source = {0, 0, (float)obj->texture.width, (float)obj->texture.height};
+                        if (obj->flipX) source.width = -source.width;
+                        if (obj->flipY) source.height = -source.height;
+                        Rectangle dest = {obj->x + layer->offsetx + skyParallaxX + extraX, obj->y + layer->offsety + skyParallaxY, obj->width, obj->height};
+                        Vector2 origin = {0, obj->height};
+                        DrawTexturePro(obj->texture, source, dest, origin, obj->rotation, Fade(WHITE, layer->opacity * obj->opacity));
+                    }
                 }
             }
         }
@@ -672,41 +793,46 @@ int main(void) {
             DrawRectangle(-2000, -2000, 6000, 6000, (Color){0, 0, 0, (unsigned char)(skyAlpha * 255)});
         }
 
-        // Pass 1.2: Mountain layers
-        for (int i = 0; i < gameMap.layerCount; i++) {
-            TMJLayer *layer = &gameMap.layers[i];
-            if (!layer->visible || strstr(layer->name, "mountain") == NULL) continue;
-            if (strcmp(layer->type, "tilelayer") == 0 && layer->data != NULL) {
-                for (int y = 0; y < layer->height; y++) {
-                    for (int x = 0; x < layer->width; x++) {
-                        int gid = layer->data[y * layer->width + x];
-                        if (gid == 0) continue;
-                        int tsIdx = -1;
-                        for (int k = gameMap.tilesetCount - 1; k >= 0; k--) {
-                            if (gid >= gameMap.tilesets[k].firstgid) { tsIdx = k; break; }
-                        }
-                        if (tsIdx != -1 && gameMap.tilesets[tsIdx].texture.id != 0) {
-                            TMJTileset *ts = &gameMap.tilesets[tsIdx];
-                            int localId = gid - ts->firstgid;
-                            int tx = ts->margin + (localId % ts->columns) * (ts->tileWidth + ts->spacing);
-                            int ty = ts->margin + (localId / ts->columns) * (ts->tileHeight + ts->spacing);
-                            Rectangle source = { (float)tx, (float)ty, (float)ts->tileWidth, (float)ts->tileHeight };
-                            Vector2 pos = { (float)x * gameMap.tileWidth + layer->offsetx, (float)y * gameMap.tileHeight + layer->offsety };
-                            DrawTextureRec(ts->texture, source, pos, WHITE);
+        // Pass 1.2: Mountain layers (xa - parallax factor 0.6, horizontal + vertical, centered relative to map center 608.0f, 419.0f)
+        float mountainParallaxX = (myCam.rl.target.x - 608.0f) * (1.0f - 0.6f);
+        float mountainParallaxY = (myCam.rl.target.y - 419.0f) * (1.0f - 0.6f);
+        for (int repeat = -1; repeat <= 1; repeat++) {
+            float extraX = repeat * 1200.0f; // Mountain segment repetition step
+            for (int i = 0; i < gameMap.layerCount; i++) {
+                TMJLayer *layer = &gameMap.layers[i];
+                if (!layer->visible || strstr(layer->name, "mountain") == NULL) continue;
+                if (strcmp(layer->type, "tilelayer") == 0 && layer->data != NULL) {
+                    for (int y = 0; y < layer->height; y++) {
+                        for (int x = 0; x < layer->width; x++) {
+                            int gid = layer->data[y * layer->width + x];
+                            if (gid == 0) continue;
+                            int tsIdx = -1;
+                            for (int k = gameMap.tilesetCount - 1; k >= 0; k--) {
+                                if (gid >= gameMap.tilesets[k].firstgid) { tsIdx = k; break; }
+                            }
+                            if (tsIdx != -1 && gameMap.tilesets[tsIdx].texture.id != 0) {
+                                TMJTileset *ts = &gameMap.tilesets[tsIdx];
+                                int localId = gid - ts->firstgid;
+                                int tx = ts->margin + (localId % ts->columns) * (ts->tileWidth + ts->spacing);
+                                int ty = ts->margin + (localId / ts->columns) * (ts->tileHeight + ts->spacing);
+                                Rectangle source = { (float)tx, (float)ty, (float)ts->tileWidth, (float)ts->tileHeight };
+                                Vector2 pos = { (float)x * gameMap.tileWidth + layer->offsetx + mountainParallaxX + extraX, (float)y * gameMap.tileHeight + layer->offsety + mountainParallaxY };
+                                DrawTextureRec(ts->texture, source, pos, WHITE);
+                            }
                         }
                     }
                 }
-            }
-            if (strcmp(layer->type, "objectgroup") == 0) {
-                for (int j = 0; j < layer->objectCount; j++) {
-                    TMJObject *obj = &layer->objects[j];
-                    if (!obj->visible || obj->texture.id == 0) continue;
-                    Rectangle source = {0, 0, (float)obj->texture.width, (float)obj->texture.height};
-                    if (obj->flipX) source.width = -source.width;
-                    if (obj->flipY) source.height = -source.height;
-                    Rectangle dest = {obj->x + layer->offsetx, obj->y + layer->offsety, obj->width, obj->height};
-                    Vector2 origin = {0, obj->height};
-                    DrawTexturePro(obj->texture, source, dest, origin, obj->rotation, Fade(WHITE, layer->opacity * obj->opacity));
+                if (strcmp(layer->type, "objectgroup") == 0) {
+                    for (int j = 0; j < layer->objectCount; j++) {
+                        TMJObject *obj = &layer->objects[j];
+                        if (!obj->visible || obj->texture.id == 0) continue;
+                        Rectangle source = {0, 0, (float)obj->texture.width, (float)obj->texture.height};
+                        if (obj->flipX) source.width = -source.width;
+                        if (obj->flipY) source.height = -source.height;
+                        Rectangle dest = {obj->x + layer->offsetx + mountainParallaxX + extraX, obj->y + layer->offsety + mountainParallaxY, obj->width, obj->height};
+                        Vector2 origin = {0, obj->height};
+                        DrawTexturePro(obj->texture, source, dest, origin, obj->rotation, Fade(WHITE, layer->opacity * obj->opacity));
+                    }
                 }
             }
         }
@@ -714,7 +840,7 @@ int main(void) {
             DrawRectangle(-2000, -2000, 6000, 6000, (Color){0, 0, 0, (unsigned char)(mountainAlpha * 255)});
         }
 
-        // Pass 1.3: Building layers
+        // Pass 1.3: Building layers (giữ nguyên parallax 1.0)
         for (int i = 0; i < gameMap.layerCount; i++) {
             TMJLayer *layer = &gameMap.layers[i];
             if (!layer->visible || strstr(layer->name, "building") == NULL) continue;
@@ -756,6 +882,24 @@ int main(void) {
             DrawRectangle(-2000, -2000, 6000, 6000, (Color){0, 0, 0, (unsigned char)(buildingAlpha * 255)});
         }
 
+        // Draw Statue layer (behind boss)
+        for (int i = 0; i < gameMap.layerCount; i++) {
+            TMJLayer *layer = &gameMap.layers[i];
+            if (!layer->visible || strcmp(layer->name, "statue") != 0) continue;
+            if (strcmp(layer->type, "objectgroup") == 0) {
+                for (int j = 0; j < layer->objectCount; j++) {
+                    TMJObject *obj = &layer->objects[j];
+                    if (!obj->visible || obj->texture.id == 0) continue;
+                    Rectangle source = {0, 0, (float)obj->texture.width, (float)obj->texture.height};
+                    if (obj->flipX) source.width = -source.width;
+                    if (obj->flipY) source.height = -source.height;
+                    Rectangle dest = {obj->x + layer->offsetx, obj->y + layer->offsety, obj->width, obj->height};
+                    Vector2 origin = {0, obj->height};
+                    DrawTexturePro(obj->texture, source, dest, origin, obj->rotation, Fade(WHITE, layer->opacity * obj->opacity));
+                }
+            }
+        }
+
         // Draw BOSS BODY between background and foreground platforms
         DrawBossBody(&boss, texAgis, 0.0f);
 
@@ -769,7 +913,7 @@ int main(void) {
                 strstr(layer->name, "building") != NULL) continue;
             // Skip ground (collision only) / boss / agis (không vẽ sprite map)
             if (strstr(layer->name, "ground") != NULL) continue;
-            if (strcmp(layer->name, "boss") == 0 || strcmp(layer->name, "agis") == 0) continue;
+            if (strcmp(layer->name, "boss") == 0 || strcmp(layer->name, "agis") == 0 || strcmp(layer->name, "statue") == 0) continue;
 
             if (strcmp(layer->type, "tilelayer") == 0 && layer->data != NULL) {
                 for (int y = 0; y < layer->height; y++) {
@@ -814,32 +958,69 @@ int main(void) {
             DrawRectangle(-2000, -2000, 6000, 6000, (Color){0, 0, 0, (unsigned char)(fgAlpha * 255)});
         }
 
-        // Glowing Beacon (above foreground overlay)
-        if (boss.state == BOSS_PRE_INTRO) {
-            float time = (float)GetTime();
-            float pulse = sinf(time * 5.0f) * 6.0f + 16.0f;
-            DrawCircleV(boss.beaconPos, pulse + 15.0f, (Color){ 255, 235, 150, 40 });
-            DrawCircleV(boss.beaconPos, pulse + 5.0f, (Color){ 255, 180, 50, 100 });
-            DrawCircleV(boss.beaconPos, 8.0f, (Color){ 255, 255, 200, 255 });
-        }
-
-        // === CỬA THOÁT (walk-away phase): hào quang vàng tại cửa gỗ thật trên map ===
-        if (boss.state == BOSS_FAKE_DEATH && boss.walkAwayDoorActive) {
-            float t = (float)GetTime();
-            float pulse = (sinf(t * 4.0f) + 1.0f) * 0.5f;
-            float doorX = 1080.0f, doorY = 419.0f;   // tọa độ cửa gỗ thật trên map
-            // Hào quang vàng tỏa ra từ cửa gỗ
-            DrawCircleV((Vector2){doorX, doorY - 30.0f}, 60.0f + pulse * 14.0f, (Color){255, 220, 120, (unsigned char)(50 + pulse*60)});
-            // Mũi tên gợi ý đi sang phải
-            DrawText(">>", (int)(bossPlayer.position.x + 30), (int)(bossPlayer.position.y - 90),
-                30, (Color){255, 230, 120, (unsigned char)(150 + pulse*100)});
-        }
+        // (Glowing Beacon visual removed as requested)
 
         // Boss skills + boom nodes + orbs + projectiles — on top of everything
         DrawBossSkills(&boss);
         DrawBooms(&boss);
         DrawOrbs(&om);
         DrawProjectiles(&pm);
+
+        if (boss.state == BOSS_OUTRO) {
+            if (boss.outroRedOrbActive) {
+                Texture2D redOrbTex = GetOrbDamageTexture();
+                if (redOrbTex.id > 0) {
+                    float size = boss.outroRedOrbRadius * 2.5f;
+                    Rectangle source = { 0, 0, 128.0f, 128.0f };
+                    Rectangle dest = { boss.outroRedOrbPos.x, boss.outroRedOrbPos.y, size, size };
+                    Vector2 origin = { size / 2.0f, size / 2.0f };
+                    DrawTexturePro(redOrbTex, source, dest, origin, boss.outroTimer * -100.0f, (Color){255, 100, 100, 255});
+                } else {
+                    DrawCircleV(boss.outroRedOrbPos, boss.outroRedOrbRadius, (Color){255, 60, 60, 255});
+                    DrawCircleLines((int)boss.outroRedOrbPos.x, (int)boss.outroRedOrbPos.y, boss.outroRedOrbRadius, (Color){255, 100, 100, 255});
+                }
+            }
+            if (outroFakeCatActive) {
+                if (outroFakeCatAlpha > 0.99f) {
+                    DrawBossPlayer(&outroFakeCat, texIdle, texWalk, texRun, texJump, texRunJump, texAttack, texHurt);
+                } else {
+                    BeginBlendMode(BLEND_ALPHA);
+                    Color tint = {255, 255, 255, (unsigned char)(outroFakeCatAlpha * 255)};
+                    int frameIdx = outroFakeCat.currentFrame % 10;
+                    if (outroFakeCat.state == PSTATE_WALK) frameIdx = outroFakeCat.currentFrame % 12;
+                    if (outroFakeCat.state == PSTATE_ATTACK) frameIdx = outroFakeCat.currentFrame % 8;
+                    Texture2D curTex = texIdle;
+                    if (outroFakeCat.state == PSTATE_WALK) curTex = texWalk;
+                    if (outroFakeCat.state == PSTATE_ATTACK) curTex = texAttack;
+                    Rectangle source = { (float)frameIdx * 80, 0, 64, 64 };
+                    if (outroFakeCat.facingRight) source.width = -source.width;
+                    Rectangle dest = { outroFakeCat.position.x, outroFakeCat.position.y + 19.2f, 64.0f * 1.2f, 64.0f * 1.2f };
+                    Vector2 origin = { 64.0f * 1.2f / 2.0f, 64.0f * 1.2f };
+                    DrawTexturePro(curTex, source, dest, origin, 0.0f, tint);
+                    EndBlendMode();
+                }
+            }
+            if (boss.outroYellowOrbActive) {
+                Texture2D yellowOrbTex = GetOrbDamageTexture();
+                if (yellowOrbTex.id > 0) {
+                    float size = boss.outroYellowOrbRadius * 2.5f;
+                    Rectangle source = { 0, 0, 128.0f, 128.0f };
+                    Rectangle dest = { boss.outroYellowOrbPos.x, boss.outroYellowOrbPos.y, size, size };
+                    Vector2 origin = { size / 2.0f, size / 2.0f };
+                    DrawTexturePro(yellowOrbTex, source, dest, origin, boss.outroTimer * 200.0f, (Color){255, 255, 100, 255});
+                } else {
+                    DrawCircleV(boss.outroYellowOrbPos, boss.outroYellowOrbRadius, GOLD);
+                    DrawCircleLines((int)boss.outroYellowOrbPos.x, (int)boss.outroYellowOrbPos.y, boss.outroYellowOrbRadius, YELLOW);
+                }
+            }
+            if (boss.outroAuraActive) {
+                float rad = boss.outroAuraScale * 150.0f;
+                float alpha = 1.0f - (boss.outroAuraScale / 2.0f);
+                if (alpha < 0.0f) alpha = 0.0f;
+                DrawCircleGradient((int)boss.outroRedOrbPos.x, (int)boss.outroRedOrbPos.y, rad, (Color){255, 255, 255, (unsigned char)(alpha * 200)}, (Color){255, 200, 100, 0});
+            }
+        }
+
 
     } else {
         // === MAP 1 & 2: single pass (original logic) ===
@@ -894,61 +1075,66 @@ int main(void) {
     Rectangle sourceRec = {0.0f, 0.0f, (float)target.texture.width,
                            (float)-target.texture.height};
     Rectangle destRec = {0, 0, (float)SCREEN_WIDTH, (float)SCREEN_HEIGHT};
-    DrawTexturePro(target.texture, sourceRec, destRec, (Vector2){0, 0}, 0.0f,
-                   WHITE);
+    
+    bool useGrayscale = (currentMapIndex == 2 && bossInitialized && 
+                        ((boss.state == BOSS_INTRO && boss.introTimer >= 35.0f && boss.introTimer < 41.5f) ||
+                         (boss.state == BOSS_OUTRO && boss.outroTimer >= 21.5f && boss.outroTimer < 40.5f)));
+    bool useShockwave = (currentMapIndex == 2 && bossInitialized && boss.ringShockwaveTimer > 0.0f);
+
+    if (useGrayscale) {
+        BeginShaderMode(grayscaleShader);
+    } else if (useShockwave) {
+        Vector2 swWorldPos = boss.position;
+        if (boss.state == BOSS_OUTRO) swWorldPos = boss.outroRedOrbPos;
+        Vector2 screenCenter = GetWorldToScreen2D(swWorldPos, myCam.rl);
+        float center[2] = { screenCenter.x / VIRTUAL_WIDTH, 1.0f - (screenCenter.y / VIRTUAL_HEIGHT) };
+        SetShaderValue(shockwaveShader, swCenterLoc, center, SHADER_UNIFORM_VEC2);
+        
+        float normalizedTime = boss.ringShockwaveTimer / 1.5f; 
+        SetShaderValue(shockwaveShader, swTimeLoc, &normalizedTime, SHADER_UNIFORM_FLOAT);
+        
+        float params[3] = { 10.0f, 0.8f, 0.1f };
+        SetShaderValue(shockwaveShader, swParamsLoc, params, SHADER_UNIFORM_VEC3);
+        
+        BeginShaderMode(shockwaveShader);
+    }
+
+    DrawTexturePro(target.texture, sourceRec, destRec, (Vector2){0, 0}, 0.0f, WHITE);
+
+    if (useGrayscale || useShockwave) EndShaderMode();
 
     if (currentMapIndex == 2 && bossInitialized) {
         if (boss.state == BOSS_FIGHTING || boss.state == BOSS_DYING ||
-            boss.state == BOSS_DEFEATED || boss.state == BOSS_TRUE_ENRAGE) {
+            boss.state == BOSS_DEFEATED || boss.state == BOSS_OUTRO) {
             DrawUI(bossPlayer.hp, boss.hp, boss.maxHp);
 
             const char *phaseText = "Phase 1";
             if (boss.phase == BOSS_PHASE_2) phaseText = "Phase 2 - Enraged";
             if (boss.phase == BOSS_PHASE_3) phaseText = "Phase 3 - Danger!";
             if (boss.phase == BOSS_PHASE_4) phaseText = "Phase 4 - FINAL FORM!";
-            if (boss.state == BOSS_TRUE_ENRAGE) phaseText = "TRUE FINAL - PARRY TO KILL!";
 
             int textW = MeasureText(phaseText, 24);
             DrawText(phaseText, SCREEN_WIDTH / 2 - textW / 2, 70, 24, YELLOW);
         }
 
-        // === FAKE-DEATH CUTSCENE OVERLAY (8s, 4 pha) ===
-        if (boss.state == BOSS_FAKE_DEATH) {
-            float t = boss.fakeDeathTimer;
-            // Nhạc lịm dần ở pha 1-2 (lừa player tưởng thắng), bùng lại khi hồi sinh.
+        // === OUTRO CUTSCENE OVERLAY ===
+        if (boss.state == BOSS_OUTRO) {
+            
+            // Cinematic bars from the beginning
+            DrawRectangle(0, 0, SCREEN_WIDTH, 80, (Color){0, 0, 0, 200});
+            DrawRectangle(0, SCREEN_HEIGHT - 80, SCREEN_WIDTH, 80, (Color){0, 0, 0, 200});
+            
+            if (outroFlashTimer > 0.0f) {
+                float a = outroFlashTimer / 1.5f;
+                if (a > 1.0f) a = 1.0f;
+                DrawRectangle(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, (Color){255, 255, 255, (unsigned char)(a * 255)});
+            }
+        }
 
-            if (t < 3.0f) {
-                // PHA 1 COLLAPSE: tối dần + "VICTORY?" mờ hiện -> đánh lừa.
-                float a = t / 3.0f;
-                DrawRectangle(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, (Color){0, 0, 0, (unsigned char)(a * 150)});
-                if (t > 1.0f) {
-                    float ta = (t - 1.0f) / 2.0f;
-                    int fs = 60;
-                    const char *vt = "VICTORY?";
-                    int tw = MeasureText(vt, fs);
-                    DrawText(vt, SCREEN_WIDTH/2 - tw/2, SCREEN_HEIGHT/2 - 40, fs,
-                        (Color){230, 230, 255, (unsigned char)(ta * 200)});
-                }
-            } else if (t < 4.5f) {
-                // PHA 2 SILENCE: tối yên tĩnh.
-                DrawRectangle(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, (Color){0, 0, 0, 150});
-            } else if (t < 6.5f) {
-                // PHA 3 REVIVAL: glitch đỏ nhấp nháy + dải nhiễu ngang.
-                if (((int)(t * 30.0f)) % 2 == 0)
-                    DrawRectangle(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, (Color){180, 0, 0, 70});
-                for (int b = 0; b < 6; b++) {
-                    int gy = (int)((sinf(t * 20.0f + b) * 0.5f + 0.5f) * SCREEN_HEIGHT);
-                    DrawRectangle(0, gy, SCREEN_WIDTH, 4, (Color){255, 40, 40, 120});
-                }
-            } else {
-                // PHA 4 DECLARE: nhuốm tím/đỏ + chữ tuyên chiến.
-                float pulse = (sinf(t * 12.0f) + 1.0f) * 0.5f;
-                DrawRectangle(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT,
-                    (Color){120, 0, 60, (unsigned char)(40 + pulse * 50)});
-                const char *dt2 = "IT'S NOT OVER!";
-                int fs = 52; int tw = MeasureText(dt2, fs);
-                DrawText(dt2, SCREEN_WIDTH/2 - tw/2, SCREEN_HEIGHT/2 - 30, fs,
-                    (Color){255, 60, 120, (unsigned char)(180 + pulse*75)});
+        if (boss.state == BOSS_INTRO || boss.state == BOSS_OUTRO) {
+            if (fmod(GetTime(), 1.0) < 0.5) {
+                int skipW = MeasureText("Press ENTER to skip", 20);
+                DrawText("Press ENTER to skip", SCREEN_WIDTH - skipW - 20, SCREEN_HEIGHT - 40, 20, (Color){200, 200, 200, 200});
             }
         }
 
@@ -984,20 +1170,8 @@ int main(void) {
                 40, SCREEN_HEIGHT - 50, 22, (Color){200, 200, 200, 200});
         }
 
-        if (boss.state == BOSS_DYING) {
-            int textW = MeasureText("FINAL BLOW!", 48);
-            DrawText("FINAL BLOW!", SCREEN_WIDTH/2 - textW/2, SCREEN_HEIGHT/2, 48, 
-                (Color){255, 255, 100, 255});
-        }
 
-        // Nhắc đi ra cửa trong giai đoạn walk-away.
-        if (boss.state == BOSS_FAKE_DEATH && boss.walkAwayDoorActive) {
-            const char *m = "Di ra cua thoat ben phai ->";
-            int fs = 28; int tw = MeasureText(m, fs);
-            float pulse = (sinf((float)GetTime() * 3.0f) + 1.0f) * 0.5f;
-            DrawText(m, SCREEN_WIDTH/2 - tw/2, 130, fs,
-                (Color){255, 230, 150, (unsigned char)(160 + pulse*95)});
-        }
+        // (Fake death text removed)
 
         Audio_DrawSubtitles();
 
