@@ -81,6 +81,8 @@ typedef enum {
     BOSS_INTRO,         // Boss đang xuất hiện từ dưới lên
     BOSS_ROAR,          // Boss hét + screen shake
     BOSS_FIGHTING,      // Đang chiến đấu
+    BOSS_FAKE_DEATH,    // Chết giả
+    BOSS_TRUE_ENRAGE,   // Đánh tiếp sau khi đi qua cửa
     BOSS_OUTRO,         // Cutscene kết thúc mới (chờ xử lý)
     BOSS_DYING,         // HP=0 thật, đứng yên chờ nhạc ending phát hết
     BOSS_DEFEATED       // Sau khi ending hết: explosion + fade
@@ -158,9 +160,9 @@ typedef struct {
     
     // Hazard attack
     int hazardCount;
-    Vector2 hazardPositions[5];
-    float hazardWarningTime[5];
-    bool hazardActive[5];
+    Vector2 hazardPositions[12];
+    float hazardWarningTime[12];
+    bool hazardActive[12];
     
     // Claw attack (Phase 2+)
     bool clawActive;
@@ -209,6 +211,10 @@ typedef struct {
     bool preIntroTriggered;      // locked cat, lighting up
     Vector2 beaconPos;           // location of the glowing beacon
 
+    // Fake death fields
+    bool walkAwayDoorActive;
+    float reviveWalkTimer;
+
     // === BOOM NODE SYSTEM (cốt lõi mới) ===
     BoomNode booms[BOOM_PER_PHASE];
     int boomsRemaining;          // số cục boom còn lại trong phase hiện tại
@@ -226,6 +232,7 @@ typedef struct {
     bool boomLaserSkillActive;
     int activeBoomSkillType;
     float boomSkillTimer;
+    float independentHazardTimer;
 } Boss;
 
 // Boom system API

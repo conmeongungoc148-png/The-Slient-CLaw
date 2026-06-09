@@ -321,7 +321,7 @@ void Audio_Update(float dt, Boss *boss) {
         endingMusicTimer += dt;
     }
     
-    if (boss->state == BOSS_OUTRO && !playEndingMusic) {
+    if ((boss->state == BOSS_OUTRO || boss->state == BOSS_DEFEATED) && !playEndingMusic) {
         if (fight1MusicLoaded) {
             StopMusicStream(fight1Music);
             bgmTimerActive = false;

@@ -11,6 +11,7 @@
 // Lazy-loaded sprites for visual effects
 static Texture2D explosionTex = {0};
 static Texture2D laserTex = {0};
+static Texture2D hazardTex = {0};
 static bool spritesLoaded = false;
 
 // Boss glow shader variables
@@ -66,6 +67,7 @@ static void LoadBossSprites(void) {
     if (spritesLoaded) return;
     explosionTex = LoadTexture(GetBossAssetPath("assets/effects/explosion/Explosion.png"));
     laserTex = LoadTexture(GetBossAssetPath("assets/effects/laser/spritesheet.png"));
+    hazardTex = LoadTexture(GetBossAssetPath("assets/effects/hazard_sheet.png"));
     for (int i = 0; i < 9; i++) {
         char path[128];
         snprintf(path, sizeof(path), "assets/effects/vfx/splash/Frames/Vampire_skill2_frame%d.png", i + 1);
@@ -98,6 +100,7 @@ void UnloadBossAssets(void) {
     if (spritesLoaded) {
         UnloadTexture(explosionTex);
         UnloadTexture(laserTex);
+        UnloadTexture(hazardTex);
         for (int i = 0; i < 9; i++) {
             UnloadTexture(splashTexs[i]);
             splashTexs[i] = (Texture2D){0};
@@ -108,6 +111,7 @@ void UnloadBossAssets(void) {
         }
         explosionTex = (Texture2D){0};
         laserTex = (Texture2D){0};
+        hazardTex = (Texture2D){0};
 
         if (glowShaderLoaded) {
             UnloadShader(glowShader);
@@ -312,14 +316,12 @@ static AttackType ChooseNewRoundAttack(Boss *boss) {
         allowed[allowedCount++] = ATTACK_LASER;
         allowed[allowedCount++] = ATTACK_SLAM;
         allowed[allowedCount++] = ATTACK_CLAW;
-        allowed[allowedCount++] = ATTACK_HAZARD;
         allowed[allowedCount++] = ATTACK_BOOM_CHAOTIC_LASERS;
         allowed[allowedCount++] = ATTACK_BOOM_TRIPLE_TRACK_LASERS;
     } else if (boss->phase == BOSS_PHASE_4) {
         allowed[allowedCount++] = ATTACK_LASER;
         allowed[allowedCount++] = ATTACK_SLAM;
         allowed[allowedCount++] = ATTACK_CLAW;
-        allowed[allowedCount++] = ATTACK_HAZARD;
         allowed[allowedCount++] = ATTACK_BOOM_CHAOTIC_LASERS;
         allowed[allowedCount++] = ATTACK_BOOM_TRIPLE_TRACK_LASERS;
         allowed[allowedCount++] = ATTACK_RAIN;
@@ -514,10 +516,12 @@ void UpdateBoss(Boss *boss, Vector2 playerPos, ProjectileManager *pm, OrbManager
         boss->boomStaggerTimer += dt;
         if (boss->boomStaggerTimer >= boss->boomNextOrbDelay) {
             boss->boomStaggerTimer = 0.0f;
-            if (boss->phase == BOSS_PHASE_1) {
-                boss->boomNextOrbDelay = 20.0f;
+            if (boss->phase == BOSS_PHASE_1 || boss->phase == BOSS_PHASE_2) {
+                boss->boomNextOrbDelay = 8.0f;
+            } else if (boss->phase == BOSS_PHASE_3) {
+                boss->boomNextOrbDelay = 14.0f;
             } else {
-                boss->boomNextOrbDelay = 30.0f + (float)(rand() % 16); // 30-45s
+                boss->boomNextOrbDelay = 18.0f;
             }
             Vector2 hand = { boss->position.x, boss->position.y + 40.0f };
             SpawnParryOrb(om, hand, playerPos);
@@ -571,12 +575,6 @@ void UpdateBoss(Boss *boss, Vector2 playerPos, ProjectileManager *pm, OrbManager
 
     // --- Attack timer ---
     bool anySkillActive = boss->laserActive || boss->slamActive || boss->clawActive || boss->rainActive || boss->boomLaserSkillActive;
-    for (int i = 0; i < boss->hazardCount; i++) {
-        if (boss->hazardActive[i] || boss->hazardWarningTime[i] > 0) {
-            anySkillActive = true;
-            break;
-        }
-    }
     bool wasSkillActive = anySkillActive;
 
     boss->attackTimer += dt;
@@ -660,6 +658,24 @@ void UpdateBoss(Boss *boss, Vector2 playerPos, ProjectileManager *pm, OrbManager
     // --- Update Slam ---
     UpdateSlamAttack(boss, dt);
 
+    // --- Independent Hazard Logic ---
+    if (boss->phase >= BOSS_PHASE_3 && boss->state == BOSS_FIGHTING) {
+        bool hazardRunning = false;
+        for (int i = 0; i < boss->hazardCount; i++) {
+            if (boss->hazardActive[i] || boss->hazardWarningTime[i] > 0) {
+                hazardRunning = true;
+                break;
+            }
+        }
+        if (!hazardRunning) {
+            boss->independentHazardTimer += dt;
+            if (boss->independentHazardTimer >= 8.0f) { // Spawns every 8 seconds
+                StartHazardAttack(boss);
+                boss->independentHazardTimer = 0.0f;
+            }
+        }
+    }
+
     // --- Update Hazards ---
     UpdateHazardAttack(boss, dt);
 
@@ -668,12 +684,6 @@ void UpdateBoss(Boss *boss, Vector2 playerPos, ProjectileManager *pm, OrbManager
 
     // --- Breathing Room Check ---
     bool isSkillActiveNow = boss->laserActive || boss->slamActive || boss->clawActive || boss->rainActive;
-    for (int i = 0; i < boss->hazardCount; i++) {
-        if (boss->hazardActive[i] || boss->hazardWarningTime[i] > 0) {
-            isSkillActiveNow = true;
-            break;
-        }
-    }
     if (wasSkillActive && !isSkillActiveNow) {
         boss->attackTimer = 0.0f;
     }
@@ -1159,6 +1169,9 @@ void DrawBossSkills(Boss *boss) {
 
     // --- Draw Claw Attack ---
     DrawClawAttack(boss, splashTexs);
+
+    // --- Draw Hazard Attack ---
+    DrawHazardAttack(boss, hazardTex);
 
     // --- Draw Atom Bomb Visual (overlay khi triggered) ---
     if (boss->atomTriggered) {

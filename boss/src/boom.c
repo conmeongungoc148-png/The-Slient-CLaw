@@ -261,12 +261,6 @@ void UpdateBooms(Boss *boss, Vector2 playerPos, OrbManager *om, float dt) {
 
     // Check if any major boss skill is active to pause automatic boom node attacks
     bool bossSkillActive = boss->laserActive || boss->slamActive || boss->clawActive || boss->rainActive;
-    for (int h = 0; h < boss->hazardCount; h++) {
-        if (boss->hazardActive[h] || boss->hazardWarningTime[h] > 0) {
-            bossSkillActive = true;
-            break;
-        }
-    }
     bool anySkillIsActive = bossSkillActive || boss->boomLaserSkillActive;
 
     // Pause boom attacks during freeze stage (35s - 41.5s) or early intro (0 - 15s)

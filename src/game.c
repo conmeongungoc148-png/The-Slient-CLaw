@@ -62,7 +62,8 @@ static void FixTiledPath(char *path) {
   }
 
   // Prepend assets/ if not already starting with assets/ or asset_sources/
-  if (strncmp(path, "asset_sources/", 14) != 0 && strncmp(path, "assets/", 7) != 0) {
+  if (strncmp(path, "asset_sources/", 14) != 0 &&
+      strncmp(path, "assets/", 7) != 0) {
     char fixed[256];
     snprintf(fixed, sizeof(fixed), "assets/%s", path);
     strncpy(path, fixed, 255);
@@ -78,7 +79,8 @@ void LoadPlayerHitbox(float *width, float *height) {
   const char *hitboxPath = "boss/assets/player/playerhurt.tmj";
   cute_tiled_map_t *map = cute_tiled_load_map_from_file(hitboxPath, NULL);
   if (!map) {
-    TraceLog(LOG_WARNING, "[HITBOX] Failed to load %s, using default fallback.", hitboxPath);
+    TraceLog(LOG_WARNING, "[HITBOX] Failed to load %s, using default fallback.",
+             hitboxPath);
     return;
   }
 
@@ -89,7 +91,10 @@ void LoadPlayerHitbox(float *width, float *height) {
       if (obj) {
         *width = obj->width;
         *height = obj->height;
-        TraceLog(LOG_INFO, "[HITBOX] Loaded player hitbox from TMJ: width = %.2f, height = %.2f", *width, *height);
+        TraceLog(LOG_INFO,
+                 "[HITBOX] Loaded player hitbox from TMJ: width = %.2f, height "
+                 "= %.2f",
+                 *width, *height);
         break;
       }
     }
@@ -97,12 +102,16 @@ void LoadPlayerHitbox(float *width, float *height) {
   }
 
   cute_tiled_free_map(map);
+
+  // Giảm kích thước Hitbox xuống 50%
+  *width *= 0.5f;
+  *height *= 0.5f;
 }
 
 void InitPlayer(Player *player, Vector2 pos) {
   player->position = pos;
   player->velocity = (Vector2){0, 0};
-  player->speed = (Vector2){250.0f, 0.0f};
+  player->speed = (Vector2){172.5f, 0.0f};
   player->groundY = pos.y;
   player->facingRight = true;
   player->isJumping = false;
@@ -116,7 +125,7 @@ void InitPlayer(Player *player, Vector2 pos) {
 }
 void UpdatePlayer(Player *player, GameMap *map, float deltaTime) {
   const float gravity = 4000.0f;
-  const float jumpForce = -1080.0f;
+  const float jumpForce = -990.0f;
   float playerRadius = player->hitboxWidth / 2.0f;
   float playerHeight = player->hitboxHeight;
   float stepUpHeight = 16.0f;
@@ -152,13 +161,15 @@ void UpdatePlayer(Player *player, GameMap *map, float deltaTime) {
   float ladderLeft = 0.0f, ladderRight = 0.0f;
   for (int i = 0; i < map->layerCount; i++) {
     TMJLayer *layer = &map->layers[i];
-    if (!layer->visible) continue;
+    if (!layer->visible)
+      continue;
 
     char lowerName[64];
     strncpy(lowerName, layer->name, 63);
     lowerName[63] = '\0';
     for (int c = 0; lowerName[c]; c++) {
-      if (lowerName[c] >= 'A' && lowerName[c] <= 'Z') lowerName[c] = lowerName[c] - 'A' + 'a';
+      if (lowerName[c] >= 'A' && lowerName[c] <= 'Z')
+        lowerName[c] = lowerName[c] - 'A' + 'a';
     }
 
     bool isLadderLayer = (strstr(lowerName, "ladder") != NULL);
@@ -169,7 +180,8 @@ void UpdatePlayer(Player *player, GameMap *map, float deltaTime) {
         strncpy(objLower, obj->name, 63);
         objLower[63] = '\0';
         for (int c = 0; objLower[c]; c++) {
-          if (objLower[c] >= 'A' && objLower[c] <= 'Z') objLower[c] = objLower[c] - 'A' + 'a';
+          if (objLower[c] >= 'A' && objLower[c] <= 'Z')
+            objLower[c] = objLower[c] - 'A' + 'a';
         }
         bool isLadderObj = (strstr(objLower, "ladder") != NULL);
 
@@ -179,10 +191,12 @@ void UpdatePlayer(Player *player, GameMap *map, float deltaTime) {
           float objLeft = objX;
           float objRight = objX + obj->width;
           float objTop = objY;
-          
-          // Override 0-height objects (Tiled point objects representing 16px tile)
+
+          // Override 0-height objects (Tiled point objects representing 16px
+          // tile)
           float objHeight = obj->height;
-          if (objHeight == 0.0f) objHeight = 16.0f;
+          if (objHeight == 0.0f)
+            objHeight = 16.0f;
           float objBottom = objY + objHeight;
 
           if (player->position.x >= objLeft && player->position.x <= objRight &&
@@ -195,7 +209,8 @@ void UpdatePlayer(Player *player, GameMap *map, float deltaTime) {
         }
       }
     }
-    if (nearLadder) break;
+    if (nearLadder)
+      break;
   }
 
   // --- Ladder and Gravity Input Logic ---
@@ -234,10 +249,12 @@ void UpdatePlayer(Player *player, GameMap *map, float deltaTime) {
     player->velocity.y += gravity * deltaTime;
   }
 
-  float nextFeetY = feetY + player->velocity.y * deltaTime;
   float nextX = player->position.x;
+  float nextFeetY = feetY + player->velocity.y * deltaTime;
 
-  // Tính toán di chuyển ngang
+  bool hitGround = false;
+  float groundLevel = 100000.0f;
+  bool inWater = false;
   float horizontalMove = currentSpeed;
   if (player->isJumping)
     horizontalMove *= 1.2f;
@@ -254,9 +271,6 @@ void UpdatePlayer(Player *player, GameMap *map, float deltaTime) {
       player->isClimbing = false;
     }
   }
-
-  bool hitGround = false;
-  float groundLevel = 100000.0f;
 
   if (!player->isClimbing) {
     for (int i = 0; i < map->layerCount; i++) {
@@ -277,9 +291,12 @@ void UpdatePlayer(Player *player, GameMap *map, float deltaTime) {
                           (strstr(lowerName, "solid") != NULL) ||
                           (strstr(lowerName, "soild") != NULL) ||
                           (strstr(lowerName, "block") != NULL);
+      bool isPlatformLayer = (strstr(lowerName, "platform") != NULL) ||
+                             (strstr(lowerName, "platfrom") != NULL);
       bool isPortalLayer = (strstr(lowerName, "portal") != NULL);
+      bool isWaterLayer = (strstr(lowerName, "water") != NULL);
 
-      if (!isSolidLayer && !isPortalLayer)
+      if (!isSolidLayer && !isPlatformLayer && !isPortalLayer && !isWaterLayer)
         continue;
 
       for (int j = 0; j < layer->objectCount; j++) {
@@ -292,14 +309,32 @@ void UpdatePlayer(Player *player, GameMap *map, float deltaTime) {
         strncpy(objLower, obj->name, 63);
         objLower[63] = '\0';
         for (int c = 0; objLower[c]; c++) {
-          if (objLower[c] >= 'A' && objLower[c] <= 'Z') objLower[c] = objLower[c] - 'A' + 'a';
+          if (objLower[c] >= 'A' && objLower[c] <= 'Z')
+            objLower[c] = objLower[c] - 'A' + 'a';
         }
-        bool isLadder = (strstr(objLower, "ladder") != NULL) || (strstr(lowerName, "ladder") != NULL);
-        if (isLadder)
+        bool isLadder = (strstr(objLower, "ladder") != NULL) ||
+                        (strstr(lowerName, "ladder") != NULL);
+        bool isSpawn = (strstr(objLower, "spawn") != NULL);
+        if (isLadder || isSpawn)
           continue;
 
         float objX = obj->x + layer->offsetx;
         float objY = obj->y + layer->offsety;
+
+        if (isWaterLayer) {
+          float objLeft = objX;
+          float objRight = objX + obj->width;
+          float objTop = objY;
+          float objBottom = objY + obj->height;
+          float headY = feetY - playerHeight;
+
+          if (nextX + playerRadius > objLeft &&
+              nextX - playerRadius < objRight && feetY > objTop &&
+              headY < objBottom) {
+            inWater = true;
+          }
+          continue;
+        }
 
         if (isPortalLayer) {
           // Portals are disabled/commented out temporarily
@@ -310,8 +345,8 @@ void UpdatePlayer(Player *player, GameMap *map, float deltaTime) {
           float objBottom = objY + obj->height;
           float headY = feetY - playerHeight;
 
-          if (nextX + playerRadius > objLeft && nextX - playerRadius < objRight &&
-              feetY > objTop && headY < objBottom) {
+          if (nextX + playerRadius > objLeft && nextX - playerRadius < objRight
+          && feetY > objTop && headY < objBottom) {
             // Trigger map change
             player->loadNextMap = true;
           }
@@ -342,40 +377,63 @@ void UpdatePlayer(Player *player, GameMap *map, float deltaTime) {
             }
           }
         } else {
-          // --- Rectangle Collision (Full Solid with Step-Up) ---
+          // --- Rectangle Collision ---
           float objLeft = objX;
           float objRight = objX + obj->width;
           float objTop = objY;
           float objBottom = objY + obj->height;
           float headY = feetY - playerHeight;
+          float groundCheckRadius = playerRadius * 0.5f;
 
-          // 1. Horizontal Collision (Walls)
-          if (feetY > objTop + 2.0f && headY < objBottom - 2.0f) {
-            if (nextX + playerRadius > objLeft &&
-                nextX - playerRadius < objRight) {
-              if (feetY > objTop && feetY <= objTop + stepUpHeight) {
-                // Can step up
-              } else {
-                // Resolve wall collision using minimum displacement push-out
-                float pushRight = objRight - (nextX - playerRadius);
-                float pushLeft = (nextX + playerRadius) - objLeft;
-                if (pushRight < pushLeft) {
-                  nextX += pushRight;
+          if (isSolidLayer) {
+            // 1. Horizontal Collision (Walls)
+            if (feetY > objTop + 2.0f && headY < objBottom - 2.0f) {
+              if (nextX + playerRadius > objLeft &&
+                  nextX - playerRadius < objRight) {
+                if (feetY > objTop && feetY <= objTop + stepUpHeight) {
+                  // Can step up
                 } else {
-                  nextX -= pushLeft;
+                  // Resolve wall collision using minimum displacement push-out
+                  float pushRight = objRight - (nextX - playerRadius);
+                  float pushLeft = (nextX + playerRadius) - objLeft;
+                  if (pushRight < pushLeft) {
+                    nextX += pushRight;
+                  } else {
+                    nextX -= pushLeft;
+                  }
                 }
               }
             }
-          }
 
-          // 2. Vertical Collision (Floor only, One-way platform)
-          float groundCheckRadius = playerRadius * 0.5f; // Use a smaller radius for floor landing to allow dropping through holes
-          if (nextX + groundCheckRadius > objLeft && nextX - groundCheckRadius < objRight) {
-            if (player->velocity.y >= 0 && feetY <= objTop + 8.0f &&
-                nextFeetY >= objTop) {
-              hitGround = true;
-              if (objTop < groundLevel)
-                groundLevel = objTop;
+            // 2. Floor Collision
+            if (nextX + groundCheckRadius > objLeft &&
+                nextX - groundCheckRadius < objRight) {
+              if (player->velocity.y >= 0 && feetY <= objTop + 8.0f &&
+                  nextFeetY >= objTop) {
+                hitGround = true;
+                if (objTop < groundLevel)
+                  groundLevel = objTop;
+              }
+            }
+
+            // 3. Ceiling Collision (Bonk Head)
+            if (nextX + groundCheckRadius > objLeft &&
+                nextX - groundCheckRadius < objRight) {
+              if (player->velocity.y < 0 && headY >= objBottom - 8.0f &&
+                  (headY + player->velocity.y * deltaTime) <= objBottom) {
+                player->velocity.y = 0;
+              }
+            }
+          } else if (isPlatformLayer) {
+            // 2. Vertical Collision (Floor only, One-way platform)
+            if (nextX + groundCheckRadius > objLeft &&
+                nextX - groundCheckRadius < objRight) {
+              if (player->velocity.y >= 0 && feetY <= objTop + 8.0f &&
+                  nextFeetY >= objTop) {
+                hitGround = true;
+                if (objTop < groundLevel)
+                  groundLevel = objTop;
+              }
             }
           }
         }
@@ -387,7 +445,8 @@ void UpdatePlayer(Player *player, GameMap *map, float deltaTime) {
   player->position.x = nextX;
   player->isRunning = false;
   if (player->isClimbing) {
-    if (pressUp || pressDown || IsKeyDown(KEY_RIGHT) || IsKeyDown(KEY_D) || IsKeyDown(KEY_LEFT) || IsKeyDown(KEY_A)) {
+    if (pressUp || pressDown || IsKeyDown(KEY_RIGHT) || IsKeyDown(KEY_D) ||
+        IsKeyDown(KEY_LEFT) || IsKeyDown(KEY_A)) {
       player->isRunning = true;
     }
     if (IsKeyDown(KEY_RIGHT) || IsKeyDown(KEY_D)) {
@@ -411,6 +470,13 @@ void UpdatePlayer(Player *player, GameMap *map, float deltaTime) {
     player->isJumping = false;
   } else {
     player->position.y = nextFeetY - 64.0f;
+  }
+
+  if (inWater) {
+    player->velocity.y -= (gravity + 600.0f) * deltaTime;
+    player->velocity.y *= 0.90f;
+    player->velocity.x *= 0.92f;
+    player->isJumping = false;
   }
 
   // --- Giới hạn biên bản đồ động ---
@@ -456,8 +522,8 @@ void UpdatePlayer(Player *player, GameMap *map, float deltaTime) {
   }
 }
 void DrawPlayer(Player *player, Texture2D idle, Texture2D walk, Texture2D run,
-                Texture2D jump, Texture2D attack, Texture2D runJump, Texture2D hurt, int frameW, int frameH,
-                float scale) {
+                Texture2D jump, Texture2D attack, Texture2D runJump,
+                Texture2D hurt, int frameW, int frameH, float scale) {
   float yOffset = 64.0f;
   float spacing = (frameW == 80) ? 0.0f : 16.0f;
 
@@ -525,12 +591,21 @@ void DrawPlayer(Player *player, Texture2D idle, Texture2D walk, Texture2D run,
   else if (frameH == 64)
     paddingCompensation = 16.0f * scale;
 
-  Rectangle dest = {player->position.x,
+  // Dịch hình ảnh con mèo tới trước 10px (để Hitbox lùi về sau 10px)
+  float spriteOffsetX = player->facingRight ? 10.0f : -10.0f;
+
+  Rectangle dest = {player->position.x + spriteOffsetX,
                     player->position.y + yOffset + paddingCompensation,
                     (float)frameW * scale, (float)frameH * scale};
   DrawTexturePro(currentTex, source, dest,
                  (Vector2){(float)frameW * scale / 2.0f, (float)frameH * scale},
                  0.0f, WHITE);
+
+  // --- DEBUG HITBOX ---
+  Rectangle hitbox = {player->position.x - player->hitboxWidth / 2.0f,
+                      player->position.y - player->hitboxHeight,
+                      player->hitboxWidth, player->hitboxHeight};
+  DrawRectangleLinesEx(hitbox, 2.0f, RED);
 }
 
 // --- Layer Helpers using cute_tiled ---
@@ -547,12 +622,13 @@ static int CountLayers(cute_tiled_layer_t *layer) {
   return count;
 }
 
-static void ProcessLayers(cute_tiled_layer_t *layer, GameMap *map,
+static void ProcessLayers(cute_tiled_map_t *tiled_map,
+                          cute_tiled_layer_t *layer, GameMap *map,
                           int *currentLayerIdx, float parentOffsetX,
                           float parentOffsetY) {
   while (layer) {
     if (layer->type.ptr && strcmp(layer->type.ptr, "group") == 0) {
-      ProcessLayers(layer->layers, map, currentLayerIdx,
+      ProcessLayers(tiled_map, layer->layers, map, currentLayerIdx,
                     parentOffsetX + layer->offsetx,
                     parentOffsetY + layer->offsety);
     } else {
@@ -605,12 +681,37 @@ static void ProcessLayers(cute_tiled_layer_t *layer, GameMap *map,
               int gid = cute_tiled_unset_flags(rawGid);
 
               // Find matching tileset texture
-              for (int k = map->tilesetCount - 1; k >= 0; k--) {
-                if (gid >= map->tilesets[k].firstgid) {
-                  if (map->tilesets[k].texture.id != 0) {
-                    tmjObj->texture = map->tilesets[k].texture;
+              cute_tiled_tileset_t *best_ts = NULL;
+              int ts_index = -1;
+              int ts_k = 0;
+              cute_tiled_tileset_t *ts_iter = tiled_map->tilesets;
+              while (ts_iter) {
+                if (gid >= ts_iter->firstgid) {
+                  best_ts = ts_iter;
+                  ts_index = ts_k;
+                }
+                ts_iter = ts_iter->next;
+                ts_k++;
+              }
+
+              if (best_ts) {
+                if (best_ts->image.ptr && strlen(best_ts->image.ptr) > 0) {
+                  // Standard single-image tileset
+                  tmjObj->texture = map->tilesets[ts_index].texture;
+                } else {
+                  // Image collection tileset
+                  int localId = gid - best_ts->firstgid;
+                  cute_tiled_tile_descriptor_t *tile = best_ts->tiles;
+                  while (tile) {
+                    if (tile->tile_index == localId && tile->image.ptr) {
+                      char fullPath[256];
+                      strncpy(fullPath, tile->image.ptr, 255);
+                      FixTiledPath(fullPath);
+                      tmjObj->texture = GetCachedTexture(fullPath);
+                      break;
+                    }
+                    tile = tile->next;
                   }
-                  break;
                 }
               }
             }
@@ -700,7 +801,7 @@ GameMap LoadMapData(const char *filename) {
   if (map.layerCount > 0) {
     map.layers = (TMJLayer *)calloc(map.layerCount, sizeof(TMJLayer));
     int currentIdx = 0;
-    ProcessLayers(tiled_map->layers, &map, &currentIdx, 0.0f, 0.0f);
+    ProcessLayers(tiled_map, tiled_map->layers, &map, &currentIdx, 0.0f, 0.0f);
   }
 
   cute_tiled_free_map(tiled_map);

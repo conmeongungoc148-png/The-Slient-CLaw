@@ -271,7 +271,7 @@ int main(void) {
             UpdateBoss(&boss, player.position, &pm, &om, dt, &cameraShake);
 
             // Decay camera shake over time in standalone main.c
-            bool bossSetsShakeEveryFrame = (boss.state == BOSS_INTRO) || (boss.state == BOSS_ROAR) || (boss.state == BOSS_FAKE_DEATH) || (boss.state == BOSS_DYING);
+            bool bossSetsShakeEveryFrame = (boss.state == BOSS_INTRO) || (boss.state == BOSS_ROAR) || (boss.state == BOSS_DYING);
             if (!bossSetsShakeEveryFrame) {
                 if (cameraShake > 0.0f) {
                     cameraShake -= dt * 40.0f; // decay
@@ -380,23 +380,12 @@ int main(void) {
                 player.hurtBox.x = player.position.x - 10;
                 player.hurtBox.y = player.position.y - 30;
             } else {
-                if (boss.state == BOSS_PRE_INTRO || boss.state == BOSS_FIGHTING ||
-                    boss.state == BOSS_TRUE_ENRAGE ||
-                    (boss.state == BOSS_FAKE_DEATH && boss.walkAwayDoorActive)) {
+                if (boss.state == BOSS_PRE_INTRO || boss.state == BOSS_FIGHTING) {
                     UpdateBossPlayerOnMap(&player, forestMap, mapOffsetY, GROUND_Y, dt);
                 }
             }
 
-            // === ĐI RA CỬA: player tới mép phải (gần cửa) -> boss bất ngờ trồi lên ===
-            if (boss.state == BOSS_FAKE_DEATH && boss.walkAwayDoorActive) {
-                if (player.position.x >= 1060.0f) {
-                    boss.walkAwayDoorActive = false;
-                    boss.reviveWalkTimer = 0.0001f;  // bật giai đoạn REVIVAL
-                    PlaySound(laughSfx);
-                }
-            }
-
-            if (boss.state == BOSS_FIGHTING || boss.state == BOSS_TRUE_ENRAGE) {
+            if (boss.state == BOSS_FIGHTING) {
                 UpdateProjectiles(&pm, dt);
                 UpdateOrbs(&om, player.position, boss.position, GROUND_Y, dt);
 
@@ -451,11 +440,9 @@ int main(void) {
                         wasReady[i] = (om.orbs[i].state == ORB_READY);
                     }
                     Vector2 orbTarget = boss.position;
-                    if (boss.state != BOSS_TRUE_ENRAGE) {
-                        int bi = BoomNearestActive(&boss, player.position);
-                        if (bi >= 0) {
-                            orbTarget = boss.booms[bi].position;
-                        }
+                    int bi = BoomNearestActive(&boss, player.position);
+                    if (bi >= 0) {
+                        orbTarget = boss.booms[bi].position;
                     }
                     TryCatchOrb(&om, player.hurtBox, orbTarget);
                     for (int i = 0; i < MAX_ORBS; i++) {
@@ -508,24 +495,15 @@ int main(void) {
 
                 for (int i = 0; i < MAX_ORBS; i++) {
                     if (om.orbs[i].state != ORB_RETURNING) continue;
-                    if (boss.state == BOSS_TRUE_ENRAGE) {
-                        if (CheckCollision(om.orbs[i].hitbox, boss.hurtBox)) {
-                            BossTakeDamage(&boss, om.orbs[i].damage);
+                    int bi = BoomNearestActive(&boss, om.orbs[i].position);
+                    if (bi >= 0) {
+                        float dx = boss.booms[bi].position.x - om.orbs[i].position.x;
+                        float dy = boss.booms[bi].position.y - om.orbs[i].position.y;
+                        if (dx*dx + dy*dy < 70.0f*70.0f) {
+                            BoomHit(&boss, bi);
                             PlaySound(damageSfx);
                             om.orbs[i].state = ORB_INACTIVE;
                             boss.orbActive = false;
-                        }
-                    } else {
-                        int bi = BoomNearestActive(&boss, om.orbs[i].position);
-                        if (bi >= 0) {
-                            float dx = boss.booms[bi].position.x - om.orbs[i].position.x;
-                            float dy = boss.booms[bi].position.y - om.orbs[i].position.y;
-                            if (dx*dx + dy*dy < 70.0f*70.0f) {
-                                BoomHit(&boss, bi);
-                                PlaySound(damageSfx);
-                                om.orbs[i].state = ORB_INACTIVE;
-                                boss.orbActive = false;
-                            }
                         }
                     }
                 }
@@ -551,9 +529,9 @@ int main(void) {
                 for (int i = 0; i < boss.hazardCount; i++) {
                     if (!boss.hazardActive[i]) continue;
                     Rectangle hazardRect = {
-                        boss.hazardPositions[i].x - 15,
-                        boss.hazardPositions[i].y - 80,
-                        30, 80
+                        boss.hazardPositions[i].x - 10.8f,
+                        boss.hazardPositions[i].y - 48.2f,
+                        21.6f, 53.52f
                     };
                     if (CheckCollision(hazardRect, player.hurtBox)) {
                         PlayerTakeDamage(&player, 1);
@@ -724,17 +702,7 @@ int main(void) {
             DrawCircleV(boss.beaconPos, 8.0f, (Color){ 255, 255, 200, 255 });
         }
 
-        // === CỬA THOÁT (walk-away phase): hào quang vàng tại cửa gỗ thật trên map ===
-        if (boss.state == BOSS_FAKE_DEATH && boss.walkAwayDoorActive) {
-            float t = (float)GetTime();
-            float pulse = (sinf(t * 4.0f) + 1.0f) * 0.5f;
-            float doorX = 1080.0f, doorY = GROUND_Y;   // Cửa gỗ thật trên map
-            // Hào quang vàng tỏa ra từ cửa gỗ
-            DrawCircleV((Vector2){doorX, doorY - 30.0f}, 60.0f + pulse * 14.0f, (Color){255, 220, 120, (unsigned char)(50 + pulse*60)});
-            // Mũi tên gợi ý đi sang phải
-            DrawText(">>", (int)(player.position.x + 30), (int)(player.position.y - 90),
-                30, (Color){255, 230, 120, (unsigned char)(150 + pulse*100)});
-        }
+
 
         // Draw skills, orbs, projectiles on top of everything
         DrawBossSkills(&boss);
@@ -743,7 +711,7 @@ int main(void) {
         EndMode2D();
 
         // === UI ===
-        if (boss.state == BOSS_FIGHTING || boss.state == BOSS_TRUE_ENRAGE || boss.state == BOSS_DYING || boss.state == BOSS_DEFEATED) {
+        if (boss.state == BOSS_FIGHTING || boss.state == BOSS_DYING || boss.state == BOSS_DEFEATED) {
             DrawUI(player.hp, boss.hp, boss.maxHp);
 
             const char *phaseText = "Phase 1";
@@ -788,14 +756,7 @@ int main(void) {
                 (Color){255, 255, 100, 255});
         }
 
-        // Nhắc đi ra cửa trong giai đoạn walk-away.
-        if (boss.state == BOSS_FAKE_DEATH && boss.walkAwayDoorActive) {
-            const char *m = "Di ra cua thoat ben phai ->";
-            int fs = 28; int tw = MeasureText(m, fs);
-            float pulse = (sinf((float)GetTime() * 3.0f) + 1.0f) * 0.5f;
-            DrawText(m, SCREEN_WIDTH/2 - tw/2, 130, fs,
-                (Color){255, 230, 150, (unsigned char)(160 + pulse*95)});
-        }
+
 
         if (gameState == STATE_WIN) DrawWinScreen();
         if (gameState == STATE_LOSE) DrawLoseScreen();

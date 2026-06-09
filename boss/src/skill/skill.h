@@ -20,7 +20,7 @@
 #define SLAM_WARNING_TIME 2.0f
 #define SLAM_DURATION 1.0f
 
-#define HAZARD_WARNING_TIME 2.5f
+#define HAZARD_WARNING_TIME 1.2f
 
 #define CLAW_WARNING_TIME 0.8f
 #define CLAW_DURATION 0.6f
@@ -46,7 +46,7 @@ void DrawClawAttack(Boss *boss, Texture2D *splashTexs);
 // Hazard Skill
 void StartHazardAttack(Boss *boss);
 void UpdateHazardAttack(Boss *boss, float dt);
-void DrawHazardAttack(Boss *boss);
+void DrawHazardAttack(Boss *boss, Texture2D hazardTex);
 
 // Laser Skill
 void StartLaserAttack(Boss *boss, Vector2 playerPos);
