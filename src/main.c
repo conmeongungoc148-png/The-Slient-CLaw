@@ -179,6 +179,7 @@ typedef struct {
 static RainDrop mainRain[MAX_MAIN_RAIN];
 static RainDrop fgRain[MAX_FG_RAIN];
 static bool rainInitialized = false;
+static float rainWindSpeed = -64.0f; // slight wind blowing to the left (scaled down by 20% from -80.0f)
 
 float GetGroundYForRain(float x, float currentY, GameMap *map) {
     float closestGroundY = (float)map->mapHeight * map->tileHeight; // Fallback is bottom of the map
@@ -255,7 +256,7 @@ void InitRainSystem(MyCamera *camera) {
     for (int i = 0; i < MAX_MAIN_RAIN; i++) {
         mainRain[i].position.x = camLeft - 100.0f + (float)(rand() % (VIRTUAL_WIDTH + 200));
         mainRain[i].position.y = camTop - 100.0f + (float)(rand() % (VIRTUAL_HEIGHT + 150));
-        mainRain[i].speed = 550.0f + (float)(rand() % 150);
+        mainRain[i].speed = 440.0f + (float)(rand() % 120); // 20% slower (from 550+150)
         mainRain[i].length = 12.0f + (float)(rand() % 6);
         mainRain[i].isSplashing = false;
         mainRain[i].splashTimer = 0.0f;
@@ -264,7 +265,7 @@ void InitRainSystem(MyCamera *camera) {
     for (int i = 0; i < MAX_FG_RAIN; i++) {
         fgRain[i].position.x = camLeft - 100.0f + (float)(rand() % (VIRTUAL_WIDTH + 200));
         fgRain[i].position.y = camTop - 100.0f + (float)(rand() % (VIRTUAL_HEIGHT + 150));
-        fgRain[i].speed = 700.0f + (float)(rand() % 150);
+        fgRain[i].speed = 560.0f + (float)(rand() % 120); // 20% slower (from 700+150)
         fgRain[i].length = 8.0f + (float)(rand() % 4);
         fgRain[i].isSplashing = false;
         fgRain[i].splashTimer = 0.0f;
@@ -283,7 +284,7 @@ void UpdateRainSystem(MyCamera *camera, GameMap *map, float dt) {
     float camTop = camera->rl.target.y - VIRTUAL_HEIGHT / 2.0f;
     float camBottom = camera->rl.target.y + VIRTUAL_HEIGHT / 2.0f;
     
-    float windSpeed = -80.0f; // slight wind blowing to the left
+    float windSpeed = rainWindSpeed;
     
     for (int i = 0; i < MAX_MAIN_RAIN; i++) {
         if (mainRain[i].isSplashing) {
@@ -346,7 +347,7 @@ void DrawMainRain(void) {
         } else {
             Vector2 start = mainRain[i].position;
             Vector2 end = {
-                start.x - 80.0f * (mainRain[i].length / 550.0f),
+                start.x - rainWindSpeed * (mainRain[i].length / mainRain[i].speed),
                 start.y - mainRain[i].length
             };
             DrawLineEx(start, end, 1.0f, (Color){ 130, 170, 210, 110 });
@@ -358,7 +359,7 @@ void DrawForegroundRain(void) {
     for (int i = 0; i < MAX_FG_RAIN; i++) {
         Vector2 start = fgRain[i].position;
         Vector2 end = {
-            start.x - 80.0f * 1.2f * (fgRain[i].length / 700.0f),
+            start.x - (rainWindSpeed * 1.2f) * (fgRain[i].length / fgRain[i].speed),
             start.y - fgRain[i].length
         };
         DrawLineEx(start, end, 0.7f, (Color){ 150, 190, 230, 65 });
@@ -429,6 +430,7 @@ int main(void) {
       if (bossInitialized) {
         Audio_Update(dt, &boss);
       }
+      UpdateRainSystem(&myCam, &gameMap, dt);
 
       // === BOSS FIGHT LOGIC UPDATE ===
       if (bossGameState == STATE_PLAYING) {
@@ -1382,6 +1384,9 @@ int main(void) {
               }
             }
           }
+          if (strcmp(layer->name, "tiles") == 0) {
+            DrawMainRain();
+          }
         }
         if (strcmp(layer->type, "objectgroup") == 0) {
           for (int j = 0; j < layer->objectCount; j++) {
@@ -1500,6 +1505,7 @@ int main(void) {
               (Color){255, 200, 100, 0});
         }
       }
+      DrawForegroundRain();
 
     } else {
       // === MAP 1 & 2: single pass (original logic) ===
