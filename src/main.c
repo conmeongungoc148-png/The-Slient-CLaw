@@ -3,6 +3,7 @@
 #include "raylib.h"
 #include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "audio.h"
@@ -161,6 +162,208 @@ void GetMapBackgroundBounds(GameMap *map, float *minX, float *maxX, float *minY,
 }
 
 Font gGameFont;
+
+#define MAX_MAIN_RAIN 180
+#define MAX_FG_RAIN 60
+
+typedef struct {
+    Vector2 position;
+    float speed;
+    float length;
+    bool isSplashing;
+    float splashTimer;
+    Vector2 splashVelocity[3];
+    Vector2 splashPosition[3];
+} RainDrop;
+
+static RainDrop mainRain[MAX_MAIN_RAIN];
+static RainDrop fgRain[MAX_FG_RAIN];
+static bool rainInitialized = false;
+
+float GetGroundYForRain(float x, float currentY, GameMap *map) {
+    float closestGroundY = (float)map->mapHeight * map->tileHeight; // Fallback is bottom of the map
+    
+    for (int i = 0; i < map->layerCount; i++) {
+        TMJLayer *layer = &map->layers[i];
+        if (!layer->visible || strcmp(layer->type, "objectgroup") != 0)
+            continue;
+            
+        // Check if it is a ground or platform layer
+        char lowerName[64];
+        strncpy(lowerName, layer->name, 63);
+        lowerName[63] = '\0';
+        for (int c = 0; lowerName[c]; c++) {
+            if (lowerName[c] >= 'A' && lowerName[c] <= 'Z') {
+                lowerName[c] = lowerName[c] - 'A' + 'a';
+            }
+        }
+        
+        bool isSolid = (strstr(lowerName, "ground") != NULL) ||
+                       (strstr(lowerName, "solid") != NULL) ||
+                       (strstr(lowerName, "soild") != NULL) ||
+                       (strstr(lowerName, "block") != NULL) ||
+                       (strstr(lowerName, "platform") != NULL) ||
+                       (strstr(lowerName, "platfrom") != NULL);
+                       
+        if (!isSolid)
+            continue;
+            
+        for (int j = 0; j < layer->objectCount; j++) {
+            TMJObject *obj = &layer->objects[j];
+            if (obj->texture.id != 0)
+                continue;
+                
+            float objX = obj->x + layer->offsetx;
+            float objY = obj->y + layer->offsety;
+            float objWidth = obj->width;
+            
+            // If it's a rectangle
+            if (obj->polygonCount == 0) {
+                if (x >= objX && x <= objX + objWidth) {
+                    if (objY >= currentY && objY < closestGroundY) {
+                        closestGroundY = objY;
+                    }
+                }
+            } else {
+                // Polygon/Slope (slopeY check)
+                for (int k = 0; k < obj->polygonCount; k++) {
+                    Point p1 = obj->polygon[k];
+                    Point p2 = obj->polygon[(k + 1) % obj->polygonCount];
+                    float x1 = p1.x + objX;
+                    float y1 = p1.y + objY;
+                    float x2 = p2.x + objX;
+                    float y2 = p2.y + objY;
+                    float minX = (x1 < x2) ? x1 : x2;
+                    float maxX = (x1 > x2) ? x1 : x2;
+                    if (x >= minX && x <= maxX) {
+                        float slopeY = y1 + (y2 - y1) * (x - x1) / (x2 - x1);
+                        if (slopeY >= currentY && slopeY < closestGroundY) {
+                            closestGroundY = slopeY;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return closestGroundY;
+}
+
+void InitRainSystem(MyCamera *camera) {
+    float camLeft = camera->rl.target.x - VIRTUAL_WIDTH / 2.0f;
+    float camTop = camera->rl.target.y - VIRTUAL_HEIGHT / 2.0f;
+    
+    for (int i = 0; i < MAX_MAIN_RAIN; i++) {
+        mainRain[i].position.x = camLeft - 100.0f + (float)(rand() % (VIRTUAL_WIDTH + 200));
+        mainRain[i].position.y = camTop - 100.0f + (float)(rand() % (VIRTUAL_HEIGHT + 150));
+        mainRain[i].speed = 550.0f + (float)(rand() % 150);
+        mainRain[i].length = 12.0f + (float)(rand() % 6);
+        mainRain[i].isSplashing = false;
+        mainRain[i].splashTimer = 0.0f;
+    }
+    
+    for (int i = 0; i < MAX_FG_RAIN; i++) {
+        fgRain[i].position.x = camLeft - 100.0f + (float)(rand() % (VIRTUAL_WIDTH + 200));
+        fgRain[i].position.y = camTop - 100.0f + (float)(rand() % (VIRTUAL_HEIGHT + 150));
+        fgRain[i].speed = 700.0f + (float)(rand() % 150);
+        fgRain[i].length = 8.0f + (float)(rand() % 4);
+        fgRain[i].isSplashing = false;
+        fgRain[i].splashTimer = 0.0f;
+    }
+    rainInitialized = true;
+}
+
+void UpdateRainSystem(MyCamera *camera, GameMap *map, float dt) {
+    if (!rainInitialized) {
+        InitRainSystem(camera);
+        return;
+    }
+    
+    float camLeft = camera->rl.target.x - VIRTUAL_WIDTH / 2.0f;
+    float camRight = camera->rl.target.x + VIRTUAL_WIDTH / 2.0f;
+    float camTop = camera->rl.target.y - VIRTUAL_HEIGHT / 2.0f;
+    float camBottom = camera->rl.target.y + VIRTUAL_HEIGHT / 2.0f;
+    
+    float windSpeed = -80.0f; // slight wind blowing to the left
+    
+    for (int i = 0; i < MAX_MAIN_RAIN; i++) {
+        if (mainRain[i].isSplashing) {
+            mainRain[i].splashTimer -= dt;
+            for (int k = 0; k < 3; k++) {
+                mainRain[i].splashPosition[k].x += mainRain[i].splashVelocity[k].x * dt;
+                mainRain[i].splashPosition[k].y += mainRain[i].splashVelocity[k].y * dt;
+                mainRain[i].splashVelocity[k].y += 980.0f * dt; // gravity
+            }
+            if (mainRain[i].splashTimer <= 0.0f) {
+                mainRain[i].position.x = camLeft - 100.0f + (float)(rand() % (VIRTUAL_WIDTH + 200));
+                mainRain[i].position.y = camTop - 100.0f - (float)(rand() % 50);
+                mainRain[i].isSplashing = false;
+            }
+        } else {
+            mainRain[i].position.x += windSpeed * dt;
+            mainRain[i].position.y += mainRain[i].speed * dt;
+            
+            float groundY = GetGroundYForRain(mainRain[i].position.x, mainRain[i].position.y, map);
+            
+            if (mainRain[i].position.y >= groundY) {
+                mainRain[i].isSplashing = true;
+                mainRain[i].splashTimer = 0.12f;
+                for (int k = 0; k < 3; k++) {
+                    mainRain[i].splashPosition[k] = (Vector2){ mainRain[i].position.x, groundY };
+                    float vx = -80.0f + (k * 80.0f) + (float)(rand() % 40 - 20);
+                    float vy = -120.0f - (float)(rand() % 60);
+                    mainRain[i].splashVelocity[k] = (Vector2){ vx, vy };
+                }
+            }
+            
+            if (mainRain[i].position.y > camBottom + 50.0f || 
+                mainRain[i].position.x < camLeft - 150.0f || 
+                mainRain[i].position.x > camRight + 150.0f) {
+                mainRain[i].position.x = camLeft - 100.0f + (float)(rand() % (VIRTUAL_WIDTH + 200));
+                mainRain[i].position.y = camTop - 100.0f - (float)(rand() % 50);
+            }
+        }
+    }
+    
+    for (int i = 0; i < MAX_FG_RAIN; i++) {
+        fgRain[i].position.x += windSpeed * 1.2f * dt;
+        fgRain[i].position.y += fgRain[i].speed * dt;
+        
+        if (fgRain[i].position.y > camBottom + 50.0f || 
+            fgRain[i].position.x < camLeft - 150.0f || 
+            fgRain[i].position.x > camRight + 150.0f) {
+            fgRain[i].position.x = camLeft - 100.0f + (float)(rand() % (VIRTUAL_WIDTH + 200));
+            fgRain[i].position.y = camTop - 100.0f - (float)(rand() % 50);
+        }
+    }
+}
+
+void DrawMainRain(void) {
+    for (int i = 0; i < MAX_MAIN_RAIN; i++) {
+        if (mainRain[i].isSplashing) {
+            for (int k = 0; k < 3; k++) {
+                DrawCircle(mainRain[i].splashPosition[k].x, mainRain[i].splashPosition[k].y, 1.0f, (Color){ 130, 170, 210, 180 });
+            }
+        } else {
+            Vector2 start = mainRain[i].position;
+            Vector2 end = {
+                start.x - 80.0f * (mainRain[i].length / 550.0f),
+                start.y - mainRain[i].length
+            };
+            DrawLineEx(start, end, 1.0f, (Color){ 130, 170, 210, 110 });
+        }
+    }
+}
+
+void DrawForegroundRain(void) {
+    for (int i = 0; i < MAX_FG_RAIN; i++) {
+        Vector2 start = fgRain[i].position;
+        Vector2 end = {
+            start.x - 80.0f * 1.2f * (fgRain[i].length / 700.0f),
+            start.y - fgRain[i].length
+        };
+        DrawLineEx(start, end, 0.7f, (Color){ 150, 190, 230, 65 });
+    }
+}
 
 static BossPlayer outroFakeCat;
 static bool outroFakeCatActive = false;
@@ -599,6 +802,12 @@ int main(void) {
       gPreIntroSlowWalk = 0;
       // Map 1 or Map 2 normal update
       UpdatePlayer(&player, &gameMap, dt);
+      
+      bool isMap2 = (strstr(mapList[currentMapIndex], "thesecondmap") != NULL);
+      if (isMap2) {
+          UpdateRainSystem(&myCam, &gameMap, dt);
+      }
+      
       if (IsKeyPressed(KEY_R)) {
         player.loadNextMap = true;
       }
@@ -631,6 +840,7 @@ int main(void) {
       UnloadMapData(&gameMap);
       gameMap = LoadMapData(mapList[currentMapIndex]);
       player.loadNextMap = false;
+      rainInitialized = false;
 
       if (currentMapIndex == 1) {
         // Lazy load assets for boss fight
@@ -1293,13 +1503,13 @@ int main(void) {
 
     } else {
       // === MAP 1 & 2: single pass (original logic) ===
+      bool isMap2 = (strstr(mapList[currentMapIndex], "thesecondmap") != NULL);
       for (int i = 0; i < gameMap.layerCount; i++) {
         TMJLayer *layer = &gameMap.layers[i];
         if (!layer->visible)
           continue;
 
         float parallaxX = 0.0f;
-        bool isMap2 = (strstr(mapList[currentMapIndex], "thesecondmap") != NULL);
         if (strcmp(layer->name, "background") == 0 && !isMap2) {
             float originX = 0.0f;
             if (strcmp(layer->type, "objectgroup") == 0 && layer->objectCount > 0) {
@@ -1373,6 +1583,9 @@ int main(void) {
               }
             }
           }
+          if (strcmp(layer->name, "Tiles") == 0 && isMap2) {
+            DrawMainRain();
+          }
         }
         if (strcmp(layer->type, "objectgroup") == 0) {
           for (int j = 0; j < layer->objectCount; j++) {
@@ -1395,6 +1608,9 @@ int main(void) {
       }
       DrawPlayer(&player, texIdle, texWalk, texRun, texJump, texAttack,
                  texRunJump, texHurt, 64, 64, 0.78f);
+      if (isMap2) {
+        DrawForegroundRain();
+      }
     }
 
     EndMode2D();
