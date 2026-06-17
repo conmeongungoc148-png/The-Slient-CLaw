@@ -50,6 +50,12 @@ static bool fight1MusicLoaded = false;
 static Music fight2Music;
 static bool fight2MusicLoaded = false;
 static bool playEndingMusic = false;
+static Music rainMusic;
+static bool rainMusicLoaded = false;
+static Music windMusic;
+static bool windMusicLoaded = false;
+static Music map2Music;
+static bool map2MusicLoaded = false;
 
 static Sound damageSfx;
 static Sound alarmSfx;
@@ -192,10 +198,107 @@ static void LoadSRT(const char *filename, SubtitleEntry *destList, int *destCoun
 
 void Audio_InitDevice(void) {
     InitAudioDevice();
+    if (FileExists("boss/assets/audio/sfx/rain.ogg")) {
+        rainMusic = LoadMusicStream("boss/assets/audio/sfx/rain.ogg");
+        rainMusicLoaded = IsMusicReady(rainMusic);
+        if (rainMusicLoaded) {
+            rainMusic.looping = true;
+            SetMusicVolume(rainMusic, 0.15f); // Soft rain volume
+            TraceLog(LOG_INFO, "BGM: Loaded rain music stream");
+        }
+    } else {
+        TraceLog(LOG_WARNING, "BGM: rain.ogg not found");
+    }
+
+    if (FileExists("assets/audio/sfx/wind.ogg")) {
+        windMusic = LoadMusicStream("assets/audio/sfx/wind.ogg");
+        windMusicLoaded = IsMusicReady(windMusic);
+        if (windMusicLoaded) {
+            windMusic.looping = true;
+            SetMusicVolume(windMusic, 0.65f); // 65% volume (reduced by 15% from 80%)
+            TraceLog(LOG_INFO, "BGM: Loaded wind music stream");
+        }
+    } else {
+        TraceLog(LOG_WARNING, "BGM: wind.ogg not found");
+    }
+
+    if (FileExists("assets/audio/music/map2music.ogg")) {
+        map2Music = LoadMusicStream("assets/audio/music/map2music.ogg");
+        map2MusicLoaded = IsMusicReady(map2Music);
+        if (map2MusicLoaded) {
+            map2Music.looping = true;
+            SetMusicVolume(map2Music, 0.60f); // 60% volume
+            TraceLog(LOG_INFO, "BGM: Loaded map2 music stream");
+        }
+    } else {
+        TraceLog(LOG_WARNING, "BGM: map2music.ogg not found");
+    }
 }
 
 void Audio_CloseDevice(void) {
+    if (rainMusicLoaded) {
+        UnloadMusicStream(rainMusic);
+        rainMusicLoaded = false;
+    }
+    if (windMusicLoaded) {
+        UnloadMusicStream(windMusic);
+        windMusicLoaded = false;
+    }
+    if (map2MusicLoaded) {
+        UnloadMusicStream(map2Music);
+        map2MusicLoaded = false;
+    }
     CloseAudioDevice();
+}
+
+void Audio_UpdateAmbient(int mapIndex, float dt) {
+    if (mapIndex == 0) {
+        // Stop rain music
+        if (rainMusicLoaded && IsMusicStreamPlaying(rainMusic)) {
+            StopMusicStream(rainMusic);
+        }
+        // Play and update wind music
+        if (windMusicLoaded) {
+            if (!IsMusicStreamPlaying(windMusic)) {
+                PlayMusicStream(windMusic);
+            }
+            UpdateMusicStream(windMusic);
+        }
+        // Play and update map2 BGM
+        if (map2MusicLoaded) {
+            if (!IsMusicStreamPlaying(map2Music)) {
+                PlayMusicStream(map2Music);
+            }
+            UpdateMusicStream(map2Music);
+        }
+    } else if (mapIndex == 1) {
+        // Stop wind music
+        if (windMusicLoaded && IsMusicStreamPlaying(windMusic)) {
+            StopMusicStream(windMusic);
+        }
+        // Stop map2 BGM
+        if (map2MusicLoaded && IsMusicStreamPlaying(map2Music)) {
+            StopMusicStream(map2Music);
+        }
+        // Play and update rain music
+        if (rainMusicLoaded) {
+            if (!IsMusicStreamPlaying(rainMusic)) {
+                PlayMusicStream(rainMusic);
+            }
+            UpdateMusicStream(rainMusic);
+        }
+    } else {
+        // Stop all
+        if (rainMusicLoaded && IsMusicStreamPlaying(rainMusic)) {
+            StopMusicStream(rainMusic);
+        }
+        if (windMusicLoaded && IsMusicStreamPlaying(windMusic)) {
+            StopMusicStream(windMusic);
+        }
+        if (map2MusicLoaded && IsMusicStreamPlaying(map2Music)) {
+            StopMusicStream(map2Music);
+        }
+    }
 }
 
 void Audio_LoadBossAssets(void) {
@@ -360,6 +463,23 @@ void Audio_ResetBossFight(void) {
     bgmTimer = 0.0f;
     bgmTimerActive = false;
     endingMusicTimer = 0.0f;
+}
+
+void Audio_PauseAll(void) {
+    if (rainMusicLoaded  && IsMusicStreamPlaying(rainMusic))   PauseMusicStream(rainMusic);
+    if (windMusicLoaded  && IsMusicStreamPlaying(windMusic))   PauseMusicStream(windMusic);
+    if (map2MusicLoaded  && IsMusicStreamPlaying(map2Music))   PauseMusicStream(map2Music);
+    if (fight1MusicLoaded && IsMusicStreamPlaying(fight1Music)) PauseMusicStream(fight1Music);
+    if (fight2MusicLoaded && IsMusicStreamPlaying(fight2Music)) PauseMusicStream(fight2Music);
+}
+
+void Audio_ResumeAll(void) {
+    // Only resume streams that are currently paused (not stopped)
+    if (rainMusicLoaded)   ResumeMusicStream(rainMusic);
+    if (windMusicLoaded)   ResumeMusicStream(windMusic);
+    if (map2MusicLoaded)   ResumeMusicStream(map2Music);
+    if (fight1MusicLoaded && !playEndingMusic) ResumeMusicStream(fight1Music);
+    if (fight2MusicLoaded &&  playEndingMusic) ResumeMusicStream(fight2Music);
 }
 
 void Audio_DrawSubtitles(void) {

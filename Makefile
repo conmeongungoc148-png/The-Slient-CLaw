@@ -5,7 +5,7 @@ CFLAGS = -Wall -Iraylib/include -Iboss/src -std=c99 -Wno-missing-braces
 LDFLAGS = -Lraylib/lib -lraylib -lopengl32 -lgdi32 -lwinmm
 
 # Tệp nguồn chính
-SRC = src/main.c src/game.c src/camera.c src/map.c src/audio.c \
+SRC = src/main.c src/game.c src/camera.c src/map.c src/audio.c src/environment.c \
       boss/src/boss.c boss/src/boss_player.c boss/src/projectile.c \
       boss/src/orb.c boss/src/boom.c src/collision.c src/gamestate.c \
       boss/src/skill/projectile_attack.c boss/src/skill/claw.c boss/src/skill/hazard.c \

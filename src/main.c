@@ -1,12 +1,14 @@
 #include "camera.h"
 #include "game.h"
 #include "raylib.h"
+#include "raymath.h"
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include "audio.h"
+#include "environment.h"
 #include "boss.h"
 #include "boss_player.h"
 #include "collision.h"
@@ -25,6 +27,7 @@ static cute_tiled_map_t *cuteBossMap = NULL;
 static GameState bossGameState = STATE_PLAYING;
 
 static Texture2D texAgis;
+static Texture2D texFish;
 
 static bool prevClawActive = false;
 static bool prevLaserActive = false;
@@ -163,208 +166,258 @@ void GetMapBackgroundBounds(GameMap *map, float *minX, float *maxX, float *minY,
 
 Font gGameFont;
 
-#define MAX_MAIN_RAIN 180
-#define MAX_FG_RAIN 60
+// ─── Settings Menu ────────────────────────────────────────────────────────────
+static bool  settingsOpen   = false;
+static float settingsVolume = 1.0f;   // master volume 0.0 – 1.0
+// Restart trigger flags (processed at end of frame to avoid mid-frame reload)
+static bool  settingsRestartRequested = false;
+static bool  settingsStuckRequested   = false;
+static bool  settingsQuitRequested    = false;
+// End-screen fade: triggers when boss fight ends (win or lose)
+static float endFadeTimer    = -1.0f; // -1 = inactive; 0..3 = fading
+static bool  endFadeIsWin    = false; // true=win, false=lose
 
+// Screen dissolve transition variables
+static bool  screenDissolveActive = false;
+static float screenDissolveTimer = 0.0f;
+static bool  screenDissolveMapSwitched = false;
+static Shader screenDissolveShader = {0};
+static int sdFactorLoc = 0;
+
+// End trigger variables
+static bool hasEndTrigger = false;
+static Vector2 endTriggerPos = {0};
+static Rectangle endTriggerRect = {0};
+static bool endTriggerIsRect = false;
+
+// Sign variables
+#define MAX_MAP_SIGNS 32
 typedef struct {
-    Vector2 position;
-    float speed;
-    float length;
-    bool isSplashing;
-    float splashTimer;
-    Vector2 splashVelocity[3];
-    Vector2 splashPosition[3];
-} RainDrop;
+  Vector2 position;
+  char message[256];
+  float alpha;
+  bool isColliding;
+} MapSign;
 
-static RainDrop mainRain[MAX_MAIN_RAIN];
-static RainDrop fgRain[MAX_FG_RAIN];
-static bool rainInitialized = false;
-static float rainWindSpeed = -64.0f; // slight wind blowing to the left (scaled down by 20% from -80.0f)
+static MapSign mapSigns[MAX_MAP_SIGNS];
+static int mapSignCount = 0;
 
-float GetGroundYForRain(float x, float currentY, GameMap *map) {
-    float closestGroundY = (float)map->mapHeight * map->tileHeight; // Fallback is bottom of the map
-    
+static void DrawSettingsMenu(int currentMapIndex) {
+    // Darkened full-screen overlay
+    DrawRectangle(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, (Color){0, 0, 0, 180});
+
+    // Panel background
+    int panelW = 440, panelH = 430;
+    int panelX = (SCREEN_WIDTH  - panelW) / 2;
+    int panelY = (SCREEN_HEIGHT - panelH) / 2;
+    DrawRectangleRounded((Rectangle){(float)panelX, (float)panelY,
+                                     (float)panelW, (float)panelH},
+                         0.10f, 12, (Color){15, 10, 25, 230});
+    DrawRectangleRoundedLines((Rectangle){(float)panelX, (float)panelY,
+                                          (float)panelW, (float)panelH},
+                               0.10f, 12, 2.0f, (Color){200, 200, 200, 230});
+
+    // Title
+    const char *title = "SETTINGS";
+    int titleSz = 36;
+    int titleW = MeasureText(title, titleSz);
+    DrawText(title, SCREEN_WIDTH / 2 - titleW / 2, panelY + 18, titleSz,
+             (Color){255, 60, 60, 255});
+
+    // ─── Button helper: rounded rect ─────────────────────────────────────────
+    int btnW = 360, btnH = 54;
+    int btnX = SCREEN_WIDTH / 2 - btnW / 2;
+    int gap  = 18;
+
+    // ── 1. VOLUME ─────────────────────────────────────────────────────────────
+    int volY = panelY + 76;
+    Rectangle volBox = {(float)btnX, (float)volY, (float)btnW, (float)btnH};
+    DrawRectangleRounded(volBox, 0.3f, 8, (Color){30, 20, 50, 220});
+    DrawRectangleRoundedLines(volBox, 0.3f, 8, 2.0f, WHITE);
+
+    // '-' button
+    Rectangle minusBtn = {(float)(btnX + 8), (float)(volY + 10), 34.0f, 34.0f};
+    DrawRectangleRounded(minusBtn, 0.4f, 6, (Color){80, 20, 20, 255});
+    DrawRectangleRoundedLines(minusBtn, 0.4f, 6, 1.5f, WHITE);
+    DrawText("-", (int)(minusBtn.x + 9), (int)(minusBtn.y + 4), 26,
+             (Color){255, 60, 60, 255});
+
+    // '+' button
+    Rectangle plusBtn = {(float)(btnX + btnW - 42), (float)(volY + 10), 34.0f, 34.0f};
+    DrawRectangleRounded(plusBtn, 0.4f, 6, (Color){20, 60, 20, 255});
+    DrawRectangleRoundedLines(plusBtn, 0.4f, 6, 1.5f, WHITE);
+    DrawText("+", (int)(plusBtn.x + 7), (int)(plusBtn.y + 4), 26,
+             (Color){255, 60, 60, 255});
+
+    // Volume bar track
+    int trackX = btnX + 50, trackY = volY + 22;
+    int trackW = btnW - 100, trackH = 12;
+    DrawRectangle(trackX, trackY, trackW, trackH, (Color){60, 40, 80, 200});
+    int fillW = (int)(settingsVolume * trackW);
+    DrawRectangle(trackX, trackY, fillW, trackH, (Color){220, 60, 80, 255});
+    DrawRectangleLines(trackX, trackY, trackW, trackH, WHITE);
+
+    // Volume label
+    char volLabel[32];
+    snprintf(volLabel, sizeof(volLabel), "Volume: %d%%",
+             (int)(settingsVolume * 100.0f));
+    int vlW = MeasureText(volLabel, 20);
+    DrawText(volLabel, btnX + btnW / 2 - vlW / 2, volY - 22, 20,
+             (Color){255, 60, 60, 255});
+
+    // Click on track to set volume
+    Vector2 mouse = GetMousePosition();
+    if (IsMouseButtonDown(MOUSE_LEFT_BUTTON)) {
+        if (mouse.x >= trackX && mouse.x <= trackX + trackW &&
+            mouse.y >= trackY - 6 && mouse.y <= trackY + trackH + 6) {
+            settingsVolume = (mouse.x - trackX) / (float)trackW;
+            if (settingsVolume < 0.0f) settingsVolume = 0.0f;
+            if (settingsVolume > 1.0f) settingsVolume = 1.0f;
+            SetMasterVolume(settingsVolume);
+        }
+        if (CheckCollisionPointRec(mouse, minusBtn)) {
+            settingsVolume -= 0.05f;
+            if (settingsVolume < 0.0f) settingsVolume = 0.0f;
+            SetMasterVolume(settingsVolume);
+        }
+        if (CheckCollisionPointRec(mouse, plusBtn)) {
+            settingsVolume += 0.05f;
+            if (settingsVolume > 1.0f) settingsVolume = 1.0f;
+            SetMasterVolume(settingsVolume);
+        }
+    }
+
+    // ── 2. RESTART (Chơi lại) ─────────────────────────────────────────────────
+    int restartY = volY + btnH + gap + 28;
+    Rectangle restartBox = {(float)btnX, (float)restartY, (float)btnW, (float)btnH};
+    bool restartHover = CheckCollisionPointRec(mouse, restartBox);
+    Color rBg = restartHover ? (Color){70, 20, 20, 240} : (Color){30, 20, 50, 220};
+    DrawRectangleRounded(restartBox, 0.3f, 8, rBg);
+    DrawRectangleRoundedLines(restartBox, 0.3f, 8, 2.0f, WHITE);
+    const char *restartText = "Choi lai (Restart)";
+    int rtW = MeasureText(restartText, 26);
+    DrawText(restartText, btnX + btnW / 2 - rtW / 2, restartY + 14, 26,
+             (Color){255, 60, 60, 255});
+    if (restartHover && IsMouseButtonReleased(MOUSE_LEFT_BUTTON)) {
+        settingsRestartRequested = true;
+        settingsOpen = false;
+    }
+
+    // ── 3. UNSTUCK (chỉ map 0) ────────────────────────────────────────────────
+    int stuckY = restartY + btnH + gap;
+    Rectangle stuckBox = {(float)btnX, (float)stuckY, (float)btnW, (float)btnH};
+    bool stuckEnabled = (currentMapIndex == 0);
+    bool stuckHover   = stuckEnabled && CheckCollisionPointRec(mouse, stuckBox);
+    Color sBg   = !stuckEnabled  ? (Color){25, 25, 35, 120}
+                : stuckHover     ? (Color){60, 20, 70, 240}
+                                 : (Color){30, 20, 50, 220};
+    Color sBord = stuckEnabled ? WHITE : (Color){100, 100, 100, 120};
+    Color sTxt  = stuckEnabled ? (Color){255, 60, 60, 255}
+                               : (Color){120, 80, 80, 140};
+    DrawRectangleRounded(stuckBox, 0.3f, 8, sBg);
+    DrawRectangleRoundedLines(stuckBox, 0.3f, 8, 2.0f, sBord);
+    const char *stuckText = stuckEnabled
+        ? "Unstuck (Bay len cao)"
+        : "Unstuck (chi cho map 1)";
+    int stW = MeasureText(stuckText, 22);
+    DrawText(stuckText, btnX + btnW / 2 - stW / 2, stuckY + 16, 22, sTxt);
+    if (stuckHover && IsMouseButtonReleased(MOUSE_LEFT_BUTTON)) {
+        settingsStuckRequested = true;
+        settingsOpen = false;
+    }
+
+    // ── 4. QUIT (Thoát game) ──────────────────────────────────────────────────
+    int quitY = stuckY + btnH + gap;
+    Rectangle quitBox = {(float)btnX, (float)quitY, (float)btnW, (float)btnH};
+    bool quitHover = CheckCollisionPointRec(mouse, quitBox);
+    Color qBg = quitHover ? (Color){70, 20, 20, 240} : (Color){30, 20, 50, 220};
+    DrawRectangleRounded(quitBox, 0.3f, 8, qBg);
+    DrawRectangleRoundedLines(quitBox, 0.3f, 8, 2.0f, WHITE);
+    const char *quitText = "Thoat game (Quit)";
+    int qW = MeasureText(quitText, 26);
+    DrawText(quitText, btnX + btnW / 2 - qW / 2, quitY + 14, 26,
+             (Color){255, 60, 60, 255});
+    if (quitHover && IsMouseButtonReleased(MOUSE_LEFT_BUTTON)) {
+        settingsQuitRequested = true;
+        settingsOpen = false;
+    }
+
+    // Close hint
+    const char *hint = "[ESC] dong lai";
+    int hW = MeasureText(hint, 18);
+    DrawText(hint, SCREEN_WIDTH / 2 - hW / 2, panelY + panelH - 28, 18,
+             (Color){180, 180, 180, 180});
+}
+
+static void ScanMapTriggers(GameMap *map, int currentMapIndex) {
+  hasEndTrigger = false;
+  endTriggerPos = (Vector2){0, 0};
+  endTriggerRect = (Rectangle){0, 0, 0, 0};
+  endTriggerIsRect = false;
+
+  mapSignCount = 0;
+
+  if (currentMapIndex == 0) { // Map 2 (index 0)
     for (int i = 0; i < map->layerCount; i++) {
-        TMJLayer *layer = &map->layers[i];
-        if (!layer->visible || strcmp(layer->type, "objectgroup") != 0)
-            continue;
-            
-        // Check if it is a ground or platform layer
-        char lowerName[64];
-        strncpy(lowerName, layer->name, 63);
-        lowerName[63] = '\0';
-        for (int c = 0; lowerName[c]; c++) {
-            if (lowerName[c] >= 'A' && lowerName[c] <= 'Z') {
-                lowerName[c] = lowerName[c] - 'A' + 'a';
-            }
-        }
-        
-        bool isSolid = (strstr(lowerName, "ground") != NULL) ||
-                       (strstr(lowerName, "solid") != NULL) ||
-                       (strstr(lowerName, "soild") != NULL) ||
-                       (strstr(lowerName, "block") != NULL) ||
-                       (strstr(lowerName, "platform") != NULL) ||
-                       (strstr(lowerName, "platfrom") != NULL);
-                       
-        if (!isSolid)
-            continue;
-            
-        for (int j = 0; j < layer->objectCount; j++) {
+      TMJLayer *layer = &map->layers[i];
+      if (strcmp(layer->type, "objectgroup") == 0) {
+        // Scan for end trigger in any object layer
+        if (!hasEndTrigger) {
+          for (int j = 0; j < layer->objectCount; j++) {
             TMJObject *obj = &layer->objects[j];
-            if (obj->texture.id != 0)
-                continue;
-                
-            float objX = obj->x + layer->offsetx;
-            float objY = obj->y + layer->offsety;
-            float objWidth = obj->width;
-            
-            // If it's a rectangle
-            if (obj->polygonCount == 0) {
-                if (x >= objX && x <= objX + objWidth) {
-                    if (objY >= currentY && objY < closestGroundY) {
-                        closestGroundY = objY;
-                    }
-                }
-            } else {
-                // Polygon/Slope (slopeY check)
-                for (int k = 0; k < obj->polygonCount; k++) {
-                    Point p1 = obj->polygon[k];
-                    Point p2 = obj->polygon[(k + 1) % obj->polygonCount];
-                    float x1 = p1.x + objX;
-                    float y1 = p1.y + objY;
-                    float x2 = p2.x + objX;
-                    float y2 = p2.y + objY;
-                    float minX = (x1 < x2) ? x1 : x2;
-                    float maxX = (x1 > x2) ? x1 : x2;
-                    if (x >= minX && x <= maxX) {
-                        float slopeY = y1 + (y2 - y1) * (x - x1) / (x2 - x1);
-                        if (slopeY >= currentY && slopeY < closestGroundY) {
-                            closestGroundY = slopeY;
-                        }
-                    }
-                }
+            char objLower[64];
+            strncpy(objLower, obj->name, 63);
+            objLower[63] = '\0';
+            for (int c = 0; objLower[c]; c++) {
+              if (objLower[c] >= 'A' && objLower[c] <= 'Z') {
+                objLower[c] = objLower[c] - 'A' + 'a';
+              }
             }
+            if (strstr(objLower, "end") != NULL) {
+              float ox = obj->x + layer->offsetx;
+              float oy = obj->y + layer->offsety;
+              endTriggerPos = (Vector2){ox, oy};
+              if (obj->width > 0 && obj->height > 0) {
+                endTriggerRect = (Rectangle){ox, oy, obj->width, obj->height};
+                endTriggerIsRect = true;
+              } else {
+                endTriggerRect = (Rectangle){0, 0, 0, 0};
+                endTriggerIsRect = false;
+              }
+              hasEndTrigger = true;
+              TraceLog(LOG_INFO, "[END TRIGGER] Found end point at: %.2f, %.2f (IsRect: %d, Name: %s, Layer: %s)", 
+                       ox, oy, endTriggerIsRect, obj->name, layer->name);
+              break;
+            }
+          }
         }
+        // Scan for signs in sign layer
+        if (strcmp(layer->name, "sign") == 0) {
+          for (int j = 0; j < layer->objectCount && mapSignCount < MAX_MAP_SIGNS; j++) {
+            TMJObject *obj = &layer->objects[j];
+            MapSign *s = &mapSigns[mapSignCount];
+            float ox = obj->x + layer->offsetx;
+            float oy = obj->y + layer->offsety;
+            s->position = (Vector2){ox, oy};
+            strncpy(s->message, obj->customProperty, 255);
+            s->message[255] = '\0';
+            if (strstr(s->message, "Get ready") != NULL || strstr(s->message, "finish you") != NULL || strstr(s->message, "MY CHILD") != NULL || strstr(s->message, "my child") != NULL) {
+              strcpy(s->message, "Get ready, I will finish you! my child");
+            }
+            s->alpha = 0.0f;
+            s->isColliding = false;
+
+            if (strlen(s->message) > 0) {
+              mapSignCount++;
+              TraceLog(LOG_INFO, "[SIGN] Loaded sign at (%.2f, %.2f) with message: %s", ox, oy, s->message);
+            }
+          }
+        }
+      }
     }
-    return closestGroundY;
+  }
 }
 
-void InitRainSystem(MyCamera *camera) {
-    float camLeft = camera->rl.target.x - VIRTUAL_WIDTH / 2.0f;
-    float camTop = camera->rl.target.y - VIRTUAL_HEIGHT / 2.0f;
-    
-    for (int i = 0; i < MAX_MAIN_RAIN; i++) {
-        mainRain[i].position.x = camLeft - 100.0f + (float)(rand() % (VIRTUAL_WIDTH + 200));
-        mainRain[i].position.y = camTop - 100.0f + (float)(rand() % (VIRTUAL_HEIGHT + 150));
-        mainRain[i].speed = 440.0f + (float)(rand() % 120); // 20% slower (from 550+150)
-        mainRain[i].length = 12.0f + (float)(rand() % 6);
-        mainRain[i].isSplashing = false;
-        mainRain[i].splashTimer = 0.0f;
-    }
-    
-    for (int i = 0; i < MAX_FG_RAIN; i++) {
-        fgRain[i].position.x = camLeft - 100.0f + (float)(rand() % (VIRTUAL_WIDTH + 200));
-        fgRain[i].position.y = camTop - 100.0f + (float)(rand() % (VIRTUAL_HEIGHT + 150));
-        fgRain[i].speed = 560.0f + (float)(rand() % 120); // 20% slower (from 700+150)
-        fgRain[i].length = 8.0f + (float)(rand() % 4);
-        fgRain[i].isSplashing = false;
-        fgRain[i].splashTimer = 0.0f;
-    }
-    rainInitialized = true;
-}
-
-void UpdateRainSystem(MyCamera *camera, GameMap *map, float dt) {
-    if (!rainInitialized) {
-        InitRainSystem(camera);
-        return;
-    }
-    
-    float camLeft = camera->rl.target.x - VIRTUAL_WIDTH / 2.0f;
-    float camRight = camera->rl.target.x + VIRTUAL_WIDTH / 2.0f;
-    float camTop = camera->rl.target.y - VIRTUAL_HEIGHT / 2.0f;
-    float camBottom = camera->rl.target.y + VIRTUAL_HEIGHT / 2.0f;
-    
-    float windSpeed = rainWindSpeed;
-    
-    for (int i = 0; i < MAX_MAIN_RAIN; i++) {
-        if (mainRain[i].isSplashing) {
-            mainRain[i].splashTimer -= dt;
-            for (int k = 0; k < 3; k++) {
-                mainRain[i].splashPosition[k].x += mainRain[i].splashVelocity[k].x * dt;
-                mainRain[i].splashPosition[k].y += mainRain[i].splashVelocity[k].y * dt;
-                mainRain[i].splashVelocity[k].y += 980.0f * dt; // gravity
-            }
-            if (mainRain[i].splashTimer <= 0.0f) {
-                mainRain[i].position.x = camLeft - 100.0f + (float)(rand() % (VIRTUAL_WIDTH + 200));
-                mainRain[i].position.y = camTop - 100.0f - (float)(rand() % 50);
-                mainRain[i].isSplashing = false;
-            }
-        } else {
-            mainRain[i].position.x += windSpeed * dt;
-            mainRain[i].position.y += mainRain[i].speed * dt;
-            
-            float groundY = GetGroundYForRain(mainRain[i].position.x, mainRain[i].position.y, map);
-            
-            if (mainRain[i].position.y >= groundY) {
-                mainRain[i].isSplashing = true;
-                mainRain[i].splashTimer = 0.12f;
-                for (int k = 0; k < 3; k++) {
-                    mainRain[i].splashPosition[k] = (Vector2){ mainRain[i].position.x, groundY };
-                    float vx = -80.0f + (k * 80.0f) + (float)(rand() % 40 - 20);
-                    float vy = -120.0f - (float)(rand() % 60);
-                    mainRain[i].splashVelocity[k] = (Vector2){ vx, vy };
-                }
-            }
-            
-            if (mainRain[i].position.y > camBottom + 50.0f || 
-                mainRain[i].position.x < camLeft - 150.0f || 
-                mainRain[i].position.x > camRight + 150.0f) {
-                mainRain[i].position.x = camLeft - 100.0f + (float)(rand() % (VIRTUAL_WIDTH + 200));
-                mainRain[i].position.y = camTop - 100.0f - (float)(rand() % 50);
-            }
-        }
-    }
-    
-    for (int i = 0; i < MAX_FG_RAIN; i++) {
-        fgRain[i].position.x += windSpeed * 1.2f * dt;
-        fgRain[i].position.y += fgRain[i].speed * dt;
-        
-        if (fgRain[i].position.y > camBottom + 50.0f || 
-            fgRain[i].position.x < camLeft - 150.0f || 
-            fgRain[i].position.x > camRight + 150.0f) {
-            fgRain[i].position.x = camLeft - 100.0f + (float)(rand() % (VIRTUAL_WIDTH + 200));
-            fgRain[i].position.y = camTop - 100.0f - (float)(rand() % 50);
-        }
-    }
-}
-
-void DrawMainRain(void) {
-    for (int i = 0; i < MAX_MAIN_RAIN; i++) {
-        if (mainRain[i].isSplashing) {
-            for (int k = 0; k < 3; k++) {
-                DrawCircle(mainRain[i].splashPosition[k].x, mainRain[i].splashPosition[k].y, 1.0f, (Color){ 130, 170, 210, 180 });
-            }
-        } else {
-            Vector2 start = mainRain[i].position;
-            Vector2 end = {
-                start.x - rainWindSpeed * (mainRain[i].length / mainRain[i].speed),
-                start.y - mainRain[i].length
-            };
-            DrawLineEx(start, end, 1.0f, (Color){ 130, 170, 210, 110 });
-        }
-    }
-}
-
-void DrawForegroundRain(void) {
-    for (int i = 0; i < MAX_FG_RAIN; i++) {
-        Vector2 start = fgRain[i].position;
-        Vector2 end = {
-            start.x - (rainWindSpeed * 1.2f) * (fgRain[i].length / fgRain[i].speed),
-            start.y - fgRain[i].length
-        };
-        DrawLineEx(start, end, 0.7f, (Color){ 150, 190, 230, 65 });
-    }
-}
 
 static BossPlayer outroFakeCat;
 static bool outroFakeCatActive = false;
@@ -375,6 +428,7 @@ int main(void) {
   setvbuf(stdout, NULL, _IONBF, 0);
   InitWindow(SCREEN_WIDTH, SCREEN_HEIGHT,
              "The Forest - Full Screen Infinite Map");
+  SetExitKey(KEY_NULL);
   gGameFont = LoadFontEx("assets/other/MedievalSharp-Regular.ttf", 96, NULL, 0);
   SetTextureFilter(gGameFont.texture, TEXTURE_FILTER_BILINEAR);
   SetTargetFPS(60);
@@ -390,12 +444,18 @@ int main(void) {
   int swTimeLoc = GetShaderLocation(shockwaveShader, "time");
   int swParamsLoc = GetShaderLocation(shockwaveShader, "shockParams");
 
+  screenDissolveShader = LoadShader(0, "assets/screen_dissolve.fs");
+  if (screenDissolveShader.id > 0) {
+    sdFactorLoc = GetShaderLocation(screenDissolveShader, "dissolveFactor");
+  }
+
   const char *mapList[] = {"assets/thesecondmap.tmj",
                            "boss/assets/boss map 1v1.tmj"};
   int totalMaps = 2;
   int currentMapIndex = 0;
 
   GameMap gameMap = LoadMapData(mapList[currentMapIndex]);
+  ScanMapTriggers(&gameMap, currentMapIndex);
 
   // Find spawn point from the map, or fallback to default
   Vector2 startPos = FindSpawnPoint(&gameMap, (Vector2){50.0f, 1168.0f});
@@ -413,7 +473,7 @@ int main(void) {
 
   MyCamera myCam = CameraNew(player.position.x, player.position.y,
                              VIRTUAL_WIDTH, VIRTUAL_HEIGHT);
-  myCam.zoom = 1.9f;
+  myCam.zoom = 1.3f;
   CameraSetSmoothDamped(&myCam, 10.0f);
   float bgMinX, bgMaxX, bgMinY, bgMaxY;
   GetMapBackgroundBounds(&gameMap, &bgMinX, &bgMaxX, &bgMinY, &bgMaxY);
@@ -425,7 +485,103 @@ int main(void) {
       dt = 0.016f; // Cap dt to prevent physics glitches when loading a map
                    // takes time!
 
+    // --- Update screen dissolve transition ---
+    if (screenDissolveActive) {
+      screenDissolveTimer += dt;
+      if (screenDissolveTimer >= 5.0f && !screenDissolveMapSwitched) {
+        screenDissolveMapSwitched = true;
+        player.loadNextMap = true; // Switch to boss map!
+      }
+      if (screenDissolveTimer >= 10.0f) {
+        screenDissolveActive = false;
+        screenDissolveTimer = 0.0f;
+        screenDissolveMapSwitched = false;
+      }
+    }
+
+    // ─── Settings menu toggle ──────────────────────────────────────────────
+    bool prevSettingsOpen = settingsOpen;
+    if (IsKeyPressed(KEY_ESCAPE)) {
+      settingsOpen = !settingsOpen;
+    }
+    // React to state change: pause when opened, resume when closed
+    if (settingsOpen != prevSettingsOpen) {
+      if (settingsOpen) Audio_PauseAll();
+      else              Audio_ResumeAll();
+    }
+
+    // Freeze all game time when settings is open or screen dissolve is active
+    if (settingsOpen || screenDissolveActive) dt = 0.0f;
+
+    // --- Process deferred settings actions ---
+    if (settingsRestartRequested) {
+      settingsRestartRequested = false;
+      // Reload current map (boss or forest)
+      if (bossInitialized) {
+        Audio_UnloadBossAssets();
+        UnloadTexture(texAgis);
+        UnloadTexture(texFish);
+        UnloadProjectileAssets();
+        UnloadBossAssets();
+        UnloadBoomAssets();
+        BossSetArenaMap(NULL, 0.0f, 620.0f);
+        OrbSetArenaMap(NULL, 0.0f, 620.0f);
+        if (cuteBossMap) { MapUnload(cuteBossMap); cuteBossMap = NULL; }
+        bossInitialized = false;
+      }
+      UnloadMapData(&gameMap);
+      gameMap = LoadMapData(mapList[currentMapIndex]);
+      ResetRainSystem();
+      ResetFireflySystem();
+      if (currentMapIndex == 1) {
+        Audio_LoadBossAssets();
+        texAgis = LoadTexture("boss/assets/boss/sprites/agis.png");
+        texFish = LoadTexture("boss/assets/other/fish.png");
+        cuteBossMap = MapLoad("boss/assets/boss map 1v1.tmj");
+        BossSetArenaMap(cuteBossMap, 0.0f, 419.0f);
+        OrbSetArenaMap(cuteBossMap, 0.0f, 419.0f);
+        bossTargetPos = FindBossPosition(&gameMap, (Vector2){608.0f, 220.0f});
+        InitBossPlayer(&bossPlayer, (Vector2){200.0f, 419.0f}, 419.0f);
+        InitBoss(&boss, bossTargetPos, bossTargetPos);
+        boss.scale = 3.7f;
+        InitProjectileManager(&pm);
+        InitOrbManager(&om);
+        bossInitialized = true;
+        prevClawActive = false; prevLaserActive = false;
+        prevHazardCount = 0; clawSlashPlayed = false; prevRainActive = false;
+        Audio_StopSFX(SFX_ALARM);
+        bossGameState = STATE_PLAYING;
+        endFadeTimer  = -1.0f; // reset end-screen fade
+        bossPlayer.position = (Vector2){200.0f, 419.0f};
+        myCam.zoom = 0.88f;
+        CameraLookAt(&myCam, bossTargetPos);
+      } else {
+        player.position = FindSpawnPoint(&gameMap, (Vector2){50.0f, 1168.0f});
+        player.velocity = (Vector2){0, 0};
+        player.isAttacking = false; player.isJumping = false;
+        player.freezeTimer = 0.0f;
+        myCam.zoom = 1.30f;
+        CameraLookAt(&myCam, player.position);
+      }
+      GetMapBackgroundBounds(&gameMap, &bgMinX, &bgMaxX, &bgMinY, &bgMaxY);
+      CameraSetBounds(&myCam, bgMinX, bgMinY, bgMaxX - bgMinX, bgMaxY - bgMinY);
+      ScanMapTriggers(&gameMap, currentMapIndex);
+      screenDissolveActive = false;
+      screenDissolveTimer = 0.0f;
+      screenDissolveMapSwitched = false;
+    }
+    if (settingsStuckRequested && currentMapIndex == 0) {
+      settingsStuckRequested = false;
+      player.position.y -= 400.0f;
+      player.velocity   = (Vector2){0, 0};
+    }
+    if (settingsQuitRequested) {
+      break;
+    }
+
     // --- UPDATE ---
+    Audio_UpdateAmbient(currentMapIndex, dt);
+
     if (currentMapIndex == 1) {
       if (bossInitialized) {
         Audio_Update(dt, &boss);
@@ -770,48 +926,85 @@ int main(void) {
         if (bossPlayer.position.x > 1216 - 30)
           bossPlayer.position.x = 1216 - 30;
 
-        // State check
-        if (boss.defeated && boss.deathTimer >= 4.0f)
+        // State check: trigger end-screen fade
+        if (boss.defeated && boss.deathTimer >= 4.0f && bossGameState != STATE_WIN) {
           bossGameState = STATE_WIN;
-        if (bossPlayer.hp <= 0)
+          endFadeTimer  = 0.0f;
+          endFadeIsWin  = true;
+        }
+        if (bossPlayer.hp <= 0 && bossGameState != STATE_LOSE) {
           bossGameState = STATE_LOSE;
-      } else if (bossGameState == STATE_LOSE) {
-        if (IsKeyPressed(KEY_R)) {
-          // Reset boss fight
-          InitBossPlayer(&bossPlayer, (Vector2){200.0f, 419.0f}, 419.0f);
-          InitBoss(&boss, bossTargetPos, bossTargetPos);
-          boss.scale = 3.7f;
-          InitProjectileManager(&pm);
-          InitOrbManager(&om);
-
-          Audio_ResetBossFight();
-
-          prevClawActive = false;
-          prevLaserActive = false;
-          prevHazardCount = 0;
-          clawSlashPlayed = false;
-
-          bossGameState = STATE_PLAYING;
-          myCam.zoom = 0.88f;
-          CameraLookAt(&myCam, bossTargetPos);
+          endFadeTimer  = 0.0f;
+          endFadeIsWin  = false;
         }
-      } else if (bossGameState == STATE_WIN) {
-        if (IsKeyPressed(KEY_R)) {
-          player.loadNextMap = true; // Cycle back to Map 1
-        }
+      } else if (bossGameState == STATE_LOSE || bossGameState == STATE_WIN) {
+        // End-screen in progress — no gameplay update needed
+        (void)0;
       }
     } else {
       gPreIntroSlowWalk = 0;
-      // Map 1 or Map 2 normal update
+      // Map 0 normal update
       UpdatePlayer(&player, &gameMap, dt);
-      
-      bool isMap2 = (strstr(mapList[currentMapIndex], "thesecondmap") != NULL);
-      if (isMap2) {
-          UpdateRainSystem(&myCam, &gameMap, dt);
+      if (currentMapIndex == 0) {
+        UpdateFireflySystem(&myCam, dt);
+        float minPlayerX = 1552.0f + player.hitboxWidth / 2.0f;
+        if (player.position.x < minPlayerX) {
+          player.position.x = minPlayerX;
+        }
+
+        // Check if player reached the "end" trigger
+        if (hasEndTrigger && !screenDissolveActive) {
+          bool playerReachedEnd = false;
+          if (endTriggerIsRect) {
+            Rectangle playerRect = {
+              player.position.x - player.hitboxWidth / 2.0f,
+              player.position.y + 64.0f - player.hitboxHeight,
+              player.hitboxWidth,
+              player.hitboxHeight
+            };
+            if (CheckCollisionRecs(playerRect, endTriggerRect)) {
+              playerReachedEnd = true;
+            }
+          } else {
+            Vector2 playerCenter = {
+              player.position.x,
+              player.position.y + 64.0f - player.hitboxHeight / 2.0f
+            };
+            float dist = Vector2Distance(playerCenter, endTriggerPos);
+            if (dist < 45.0f) {
+              playerReachedEnd = true;
+            }
+          }
+
+          if (playerReachedEnd) {
+            screenDissolveActive = true;
+            screenDissolveTimer = 0.0f;
+            screenDissolveMapSwitched = false;
+            TraceLog(LOG_INFO, "[END TRIGGER] Player reached end trigger! Transition started.");
+          }
+        }
+
+        // Update sign messages collision and fade-in
+        for (int k = 0; k < mapSignCount; k++) {
+          MapSign *s = &mapSigns[k];
+          Vector2 playerCenter = {
+            player.position.x,
+            player.position.y + 64.0f - player.hitboxHeight / 2.0f
+          };
+          float dist = Vector2Distance(playerCenter, s->position);
+          if (dist < 50.0f) {
+            s->isColliding = true;
+            s->alpha += GetFrameTime() * 3.0f;
+            if (s->alpha > 1.0f) s->alpha = 1.0f;
+          } else {
+            s->isColliding = false;
+            s->alpha = 0.0f;
+          }
+        }
       }
-      
+
       if (IsKeyPressed(KEY_R)) {
-        player.loadNextMap = true;
+        player.loadNextMap = true; // R chuyển map trên map 0
       }
     }
 
@@ -827,6 +1020,7 @@ int main(void) {
       if (bossInitialized) {
         Audio_UnloadBossAssets();
         UnloadTexture(texAgis);
+        UnloadTexture(texFish);
         UnloadProjectileAssets();
         UnloadBossAssets();
         UnloadBoomAssets();
@@ -842,13 +1036,15 @@ int main(void) {
       UnloadMapData(&gameMap);
       gameMap = LoadMapData(mapList[currentMapIndex]);
       player.loadNextMap = false;
-      rainInitialized = false;
+      ResetRainSystem();
+      ResetFireflySystem();
 
       if (currentMapIndex == 1) {
         // Lazy load assets for boss fight
         Audio_LoadBossAssets();
 
         texAgis = LoadTexture("boss/assets/boss/sprites/agis.png");
+        texFish = LoadTexture("boss/assets/other/fish.png");
         cuteBossMap = MapLoad("boss/assets/boss map 1v1.tmj");
         BossSetArenaMap(cuteBossMap, 0.0f, 419.0f);
         OrbSetArenaMap(cuteBossMap, 0.0f, 419.0f);
@@ -888,7 +1084,7 @@ int main(void) {
         myCam.zoom = 0.88f;
         CameraLookAt(&myCam, bossTargetPos);
       } else {
-        myCam.zoom = 1.50f;
+        myCam.zoom = 1.30f;
         CameraLookAt(&myCam, player.position);
       }
 
@@ -897,6 +1093,7 @@ int main(void) {
       float bgMinX, bgMaxX, bgMinY, bgMaxY;
       GetMapBackgroundBounds(&gameMap, &bgMinX, &bgMaxX, &bgMinY, &bgMaxY);
       CameraSetBounds(&myCam, bgMinX, bgMinY, bgMaxX - bgMinX, bgMaxY - bgMinY);
+      ScanMapTriggers(&gameMap, currentMapIndex);
     }
 
     // --- CAMERA UPDATE ---
@@ -1053,34 +1250,39 @@ int main(void) {
                   float rot = 0.0f;
 
                   if (flipD) {
-                      if (flipH && flipV) {
-                          rot = 90.0f;
-                          scaleX = -1.0f;
-                      } else if (flipH) {
-                          rot = 90.0f;
-                      } else if (flipV) {
-                          rot = 270.0f;
-                      } else {
-                          rot = 90.0f;
-                          scaleY = -1.0f;
-                      }
+                    if (flipH && flipV) {
+                      rot = 90.0f;
+                      scaleX = -1.0f;
+                    } else if (flipH) {
+                      rot = 90.0f;
+                    } else if (flipV) {
+                      rot = 270.0f;
+                    } else {
+                      rot = 90.0f;
+                      scaleY = -1.0f;
+                    }
                   } else {
-                      if (flipH) scaleX = -1.0f;
-                      if (flipV) scaleY = -1.0f;
+                    if (flipH)
+                      scaleX = -1.0f;
+                    if (flipV)
+                      scaleY = -1.0f;
                   }
 
                   Rectangle source = {(float)tx, (float)ty,
                                       (float)ts->tileWidth * scaleX,
                                       (float)ts->tileHeight * scaleY};
-                  
+
                   Vector2 pos = {(float)x * gameMap.tileWidth + layer->offsetx +
                                      skyParallaxX + extraX,
                                  (float)y * gameMap.tileHeight +
                                      layer->offsety + skyParallaxY};
-                                     
-                  Rectangle dest = { pos.x + ts->tileWidth / 2.0f, pos.y + ts->tileHeight / 2.0f, 
-                                     (float)ts->tileWidth, (float)ts->tileHeight };
-                  Vector2 origin = { (float)ts->tileWidth / 2.0f, (float)ts->tileHeight / 2.0f };
+
+                  Rectangle dest = {pos.x + ts->tileWidth / 2.0f,
+                                    pos.y + ts->tileHeight / 2.0f,
+                                    (float)ts->tileWidth,
+                                    (float)ts->tileHeight};
+                  Vector2 origin = {(float)ts->tileWidth / 2.0f,
+                                    (float)ts->tileHeight / 2.0f};
 
                   DrawTexturePro(ts->texture, source, dest, origin, rot, WHITE);
                 }
@@ -1220,31 +1422,36 @@ int main(void) {
                 float rot = 0.0f;
 
                 if (flipD) {
-                    if (flipH && flipV) {
-                        rot = 90.0f;
-                        scaleX = -1.0f;
-                    } else if (flipH) {
-                        rot = 90.0f;
-                    } else if (flipV) {
-                        rot = 270.0f;
-                    } else {
-                        rot = 90.0f;
-                        scaleY = -1.0f;
-                    }
+                  if (flipH && flipV) {
+                    rot = 90.0f;
+                    scaleX = -1.0f;
+                  } else if (flipH) {
+                    rot = 90.0f;
+                  } else if (flipV) {
+                    rot = 270.0f;
+                  } else {
+                    rot = 90.0f;
+                    scaleY = -1.0f;
+                  }
                 } else {
-                    if (flipH) scaleX = -1.0f;
-                    if (flipV) scaleY = -1.0f;
+                  if (flipH)
+                    scaleX = -1.0f;
+                  if (flipV)
+                    scaleY = -1.0f;
                 }
 
-                Rectangle source = {(float)tx, (float)ty, (float)ts->tileWidth * scaleX,
+                Rectangle source = {(float)tx, (float)ty,
+                                    (float)ts->tileWidth * scaleX,
                                     (float)ts->tileHeight * scaleY};
-                                    
+
                 Vector2 pos = {(float)x * gameMap.tileWidth + layer->offsetx,
                                (float)y * gameMap.tileHeight + layer->offsety};
-                               
-                Rectangle dest = { pos.x + ts->tileWidth / 2.0f, pos.y + ts->tileHeight / 2.0f, 
-                                   (float)ts->tileWidth, (float)ts->tileHeight };
-                Vector2 origin = { (float)ts->tileWidth / 2.0f, (float)ts->tileHeight / 2.0f };
+
+                Rectangle dest = {pos.x + ts->tileWidth / 2.0f,
+                                  pos.y + ts->tileHeight / 2.0f,
+                                  (float)ts->tileWidth, (float)ts->tileHeight};
+                Vector2 origin = {(float)ts->tileWidth / 2.0f,
+                                  (float)ts->tileHeight / 2.0f};
 
                 DrawTexturePro(ts->texture, source, dest, origin, rot, WHITE);
               }
@@ -1354,31 +1561,36 @@ int main(void) {
                 float rot = 0.0f;
 
                 if (flipD) {
-                    if (flipH && flipV) {
-                        rot = 90.0f;
-                        scaleX = -1.0f;
-                    } else if (flipH) {
-                        rot = 90.0f;
-                    } else if (flipV) {
-                        rot = 270.0f;
-                    } else {
-                        rot = 90.0f;
-                        scaleY = -1.0f;
-                    }
+                  if (flipH && flipV) {
+                    rot = 90.0f;
+                    scaleX = -1.0f;
+                  } else if (flipH) {
+                    rot = 90.0f;
+                  } else if (flipV) {
+                    rot = 270.0f;
+                  } else {
+                    rot = 90.0f;
+                    scaleY = -1.0f;
+                  }
                 } else {
-                    if (flipH) scaleX = -1.0f;
-                    if (flipV) scaleY = -1.0f;
+                  if (flipH)
+                    scaleX = -1.0f;
+                  if (flipV)
+                    scaleY = -1.0f;
                 }
 
-                Rectangle source = {(float)tx, (float)ty, (float)ts->tileWidth * scaleX,
+                Rectangle source = {(float)tx, (float)ty,
+                                    (float)ts->tileWidth * scaleX,
                                     (float)ts->tileHeight * scaleY};
-                                    
+
                 Vector2 pos = {(float)x * gameMap.tileWidth + layer->offsetx,
                                (float)y * gameMap.tileHeight + layer->offsety};
-                               
-                Rectangle dest = { pos.x + ts->tileWidth / 2.0f, pos.y + ts->tileHeight / 2.0f, 
-                                   (float)ts->tileWidth, (float)ts->tileHeight };
-                Vector2 origin = { (float)ts->tileWidth / 2.0f, (float)ts->tileHeight / 2.0f };
+
+                Rectangle dest = {pos.x + ts->tileWidth / 2.0f,
+                                  pos.y + ts->tileHeight / 2.0f,
+                                  (float)ts->tileWidth, (float)ts->tileHeight};
+                Vector2 origin = {(float)ts->tileWidth / 2.0f,
+                                  (float)ts->tileHeight / 2.0f};
 
                 DrawTexturePro(ts->texture, source, dest, origin, rot, WHITE);
               }
@@ -1476,22 +1688,31 @@ int main(void) {
           }
         }
         if (boss.outroYellowOrbActive) {
-          Texture2D yellowOrbTex = GetOrbDamageTexture();
-          if (yellowOrbTex.id > 0) {
+          if (texFish.id > 0) {
             float size = boss.outroYellowOrbRadius * 2.5f;
-            Rectangle source = {0, 0, 128.0f, 128.0f};
+            Rectangle source = {0, 0, (float)texFish.width, -(float)texFish.height};
             Rectangle dest = {boss.outroYellowOrbPos.x,
-                              boss.outroYellowOrbPos.y, size, size};
+                              boss.outroYellowOrbPos.y - 10.0f, size, size};
             Vector2 origin = {size / 2.0f, size / 2.0f};
-            DrawTexturePro(yellowOrbTex, source, dest, origin,
-                           boss.outroTimer * 200.0f,
-                           (Color){255, 255, 100, 255});
+            DrawTexturePro(texFish, source, dest, origin, 0.0f, WHITE);
           } else {
-            DrawCircleV(boss.outroYellowOrbPos, boss.outroYellowOrbRadius,
-                        GOLD);
-            DrawCircleLines((int)boss.outroYellowOrbPos.x,
-                            (int)boss.outroYellowOrbPos.y,
-                            boss.outroYellowOrbRadius, YELLOW);
+            Texture2D yellowOrbTex = GetOrbDamageTexture();
+            if (yellowOrbTex.id > 0) {
+              float size = boss.outroYellowOrbRadius * 2.5f;
+              Rectangle source = {0, 0, 128.0f, 128.0f};
+              Rectangle dest = {boss.outroYellowOrbPos.x,
+                                boss.outroYellowOrbPos.y, size, size};
+              Vector2 origin = {size / 2.0f, size / 2.0f};
+              DrawTexturePro(yellowOrbTex, source, dest, origin,
+                             0.0f,
+                             (Color){255, 255, 100, 255});
+            } else {
+              DrawCircleV(boss.outroYellowOrbPos, boss.outroYellowOrbRadius,
+                          GOLD);
+              DrawCircleLines((int)boss.outroYellowOrbPos.x,
+                              (int)boss.outroYellowOrbPos.y,
+                              boss.outroYellowOrbRadius, YELLOW);
+            }
           }
         }
         if (boss.outroAuraActive) {
@@ -1516,15 +1737,65 @@ int main(void) {
           continue;
 
         float parallaxX = 0.0f;
-        if (strcmp(layer->name, "background") == 0 && !isMap2) {
-            float originX = 0.0f;
-            if (strcmp(layer->type, "objectgroup") == 0 && layer->objectCount > 0) {
-                originX = layer->objects[0].x;
-                for (int j = 1; j < layer->objectCount; j++) {
-                    if (layer->objects[j].x < originX) originX = layer->objects[j].x;
-                }
+        if (strcmp(layer->name, "background") == 0 ||
+            strcmp(layer->name, "background 2") == 0 ||
+            strcmp(layer->name, "clouds") == 0) {
+          float originX = 100000.0f;
+          float maxX = -100000.0f;
+          if (strcmp(layer->type, "objectgroup") == 0 &&
+              layer->objectCount > 0) {
+            for (int j = 0; j < layer->objectCount; j++) {
+              float objLeft = layer->objects[j].x;
+              float objRight = layer->objects[j].x + layer->objects[j].width;
+              if (objLeft < originX)
+                originX = objLeft;
+              if (objRight > maxX)
+                maxX = objRight;
             }
-            parallaxX = (myCam.rl.target.x - originX) * (1.0f - 0.2f);
+          } else if (strcmp(layer->type, "tilelayer") == 0) {
+            originX = 0.0f;
+            maxX = (float)layer->width * gameMap.tileWidth;
+          }
+          if (originX > maxX) {
+            originX = 0.0f;
+            maxX = 0.0f;
+          }
+
+          if (isMap2) {
+            float factor = 0.9f; // default fallback
+            if (strcmp(layer->name, "clouds") == 0) {
+              factor = 0.1f; // Fixed 90% scroll speed for clouds
+            } else {
+              float bgWidth = maxX - originX;
+              float halfW = myCam.rl.offset.x / myCam.zoom;
+              float L_cam = myCam.bounds.width - 2.0f * halfW;
+              float visibleWidth = 2.0f * halfW;
+
+              if (L_cam > 0.0f && bgWidth > visibleWidth) {
+                float bgScrollable = bgWidth - visibleWidth;
+                float maxRelativeScrollRatio = bgScrollable / L_cam;
+
+                if (strcmp(layer->name, "background") == 0) {
+                  // Closer layer scrolls maximum amount
+                  factor = 1.0f - maxRelativeScrollRatio;
+                } else {
+                  // Further layer scrolls half as much (slower)
+                  factor = 1.0f - (maxRelativeScrollRatio * 0.5f);
+                }
+
+                if (factor < 0.0f)
+                  factor = 0.0f;
+                if (factor > 0.99f)
+                  factor = 0.99f;
+              }
+            }
+            parallaxX = (myCam.rl.target.x - originX) * factor;
+          } else {
+            if (strcmp(layer->name, "background") == 0 ||
+                strcmp(layer->name, "clouds") == 0) {
+              parallaxX = (myCam.rl.target.x - originX) * (1.0f - 0.2f);
+            }
+          }
         }
 
         if (strcmp(layer->type, "tilelayer") == 0 && layer->data != NULL) {
@@ -1559,37 +1830,44 @@ int main(void) {
                 float rot = 0.0f;
 
                 if (flipD) {
-                    if (flipH && flipV) {
-                        rot = 90.0f;
-                        scaleX = -1.0f;
-                    } else if (flipH) {
-                        rot = 90.0f;
-                    } else if (flipV) {
-                        rot = 270.0f;
-                    } else {
-                        rot = 90.0f;
-                        scaleY = -1.0f;
-                    }
+                  if (flipH && flipV) {
+                    rot = 90.0f;
+                    scaleX = -1.0f;
+                  } else if (flipH) {
+                    rot = 90.0f;
+                  } else if (flipV) {
+                    rot = 270.0f;
+                  } else {
+                    rot = 90.0f;
+                    scaleY = -1.0f;
+                  }
                 } else {
-                    if (flipH) scaleX = -1.0f;
-                    if (flipV) scaleY = -1.0f;
+                  if (flipH)
+                    scaleX = -1.0f;
+                  if (flipV)
+                    scaleY = -1.0f;
                 }
 
-                Rectangle source = {(float)tx, (float)ty, (float)ts->tileWidth * scaleX,
+                Rectangle source = {(float)tx, (float)ty,
+                                    (float)ts->tileWidth * scaleX,
                                     (float)ts->tileHeight * scaleY};
-                                    
-                Vector2 pos = {(float)x * gameMap.tileWidth + layer->offsetx + parallaxX,
+
+                Vector2 pos = {(float)x * gameMap.tileWidth + layer->offsetx +
+                                   parallaxX,
                                (float)y * gameMap.tileHeight + layer->offsety};
-                               
-                Rectangle dest = { pos.x + ts->tileWidth / 2.0f, pos.y + ts->tileHeight / 2.0f, 
-                                   (float)ts->tileWidth, (float)ts->tileHeight };
-                Vector2 origin = { (float)ts->tileWidth / 2.0f, (float)ts->tileHeight / 2.0f };
+
+                Rectangle dest = {pos.x + ts->tileWidth / 2.0f,
+                                  pos.y + ts->tileHeight / 2.0f,
+                                  (float)ts->tileWidth, (float)ts->tileHeight};
+                Vector2 origin = {(float)ts->tileWidth / 2.0f,
+                                  (float)ts->tileHeight / 2.0f};
 
                 DrawTexturePro(ts->texture, source, dest, origin, rot, WHITE);
               }
             }
           }
-          if (strcmp(layer->name, "Tiles") == 0 && isMap2) {
+          if (strcmp(layer->name, "Tiles") == 0 ||
+              strcmp(layer->name, "tiles") == 0) {
             DrawMainRain();
           }
         }
@@ -1604,18 +1882,40 @@ int main(void) {
               source.width = -source.width;
             if (obj->flipY)
               source.height = -source.height;
-            Rectangle dest = {obj->x + layer->offsetx + parallaxX, obj->y + layer->offsety,
-                              obj->width, obj->height};
+            Rectangle dest = {obj->x + layer->offsetx + parallaxX,
+                              obj->y + layer->offsety, obj->width, obj->height};
             Vector2 origin = {0, obj->height};
             DrawTexturePro(obj->texture, source, dest, origin, obj->rotation,
                            Fade(WHITE, layer->opacity * obj->opacity));
           }
         }
       }
+      if (currentMapIndex == 0) {
+        DrawTwilightOverlay(&myCam);
+      }
       DrawPlayer(&player, texIdle, texWalk, texRun, texJump, texAttack,
                  texRunJump, texHurt, 64, 64, 0.78f);
-      if (isMap2) {
-        DrawForegroundRain();
+      if (currentMapIndex == 0) {
+        DrawFireflies();
+        DrawSunlightOverlay(&myCam, dt);
+      }
+      DrawForegroundRain();
+      if (currentMapIndex == 0) {
+        for (int k = 0; k < mapSignCount; k++) {
+          MapSign *s = &mapSigns[k];
+          if (s->alpha > 0.0f) {
+            Color textColor = WHITE;
+            if (strcmp(s->message, "Get ready, I will finish you! my child") == 0) {
+              textColor = RED;
+            }
+            Vector2 size = MeasureTextEx(gGameFont, s->message, 15, 1);
+            Vector2 textPos = { s->position.x - size.x / 2.0f, s->position.y - 100.0f - size.y / 2.0f };
+            // Draw shadow
+            DrawTextEx(gGameFont, s->message, (Vector2){ textPos.x + 1, textPos.y + 1 }, 15, 1, Fade(BLACK, s->alpha * 0.8f));
+            // Draw text
+            DrawTextEx(gGameFont, s->message, textPos, 15, 1, Fade(textColor, s->alpha));
+          }
+        }
       }
     }
 
@@ -1638,8 +1938,22 @@ int main(void) {
            boss.outroTimer < 40.5f)));
     bool useShockwave = (currentMapIndex == 1 && bossInitialized &&
                          boss.ringShockwaveTimer > 0.0f);
+    bool useScreenDissolve = screenDissolveActive;
 
-    if (useGrayscale) {
+    if (useScreenDissolve) {
+      float factor = 0.0f;
+      if (screenDissolveTimer < 5.0f) {
+        factor = screenDissolveTimer / 5.0f;
+      } else if (screenDissolveTimer < 7.0f) {
+        factor = 1.0f;
+      } else {
+        factor = 1.0f - ((screenDissolveTimer - 7.0f) / 3.0f);
+      }
+      if (factor < 0.0f) factor = 0.0f;
+      if (factor > 1.0f) factor = 1.0f;
+      SetShaderValue(screenDissolveShader, sdFactorLoc, &factor, SHADER_UNIFORM_FLOAT);
+      BeginShaderMode(screenDissolveShader);
+    } else if (useGrayscale) {
       BeginShaderMode(grayscaleShader);
     } else if (useShockwave) {
       Vector2 swWorldPos = boss.position;
@@ -1663,7 +1977,7 @@ int main(void) {
     DrawTexturePro(target.texture, sourceRec, destRec, (Vector2){0, 0}, 0.0f,
                    WHITE);
 
-    if (useGrayscale || useShockwave)
+    if (useScreenDissolve || useGrayscale || useShockwave)
       EndShaderMode();
 
     if (currentMapIndex == 1 && bossInitialized) {
@@ -1753,10 +2067,39 @@ int main(void) {
 
       Audio_DrawSubtitles();
 
-      if (bossGameState == STATE_WIN)
-        DrawWinScreen();
-      if (bossGameState == STATE_LOSE)
-        DrawLoseScreen();
+      // End-screen fade + settings menu trigger
+      if (endFadeTimer >= 0.0f) {
+        endFadeTimer += GetFrameTime();
+        float fadeDur = 3.0f;
+        float t = endFadeTimer / fadeDur;
+        if (t > 1.0f) t = 1.0f;
+        unsigned char alpha = (unsigned char)(t * 220);
+        DrawRectangle(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, (Color){0, 0, 0, alpha});
+
+        // Title fades IN while overlay fades in
+        if (t > 0.2f) {
+          float tAlpha = (t - 0.2f) / 0.5f;
+          if (tAlpha > 1.0f) tAlpha = 1.0f;
+          unsigned char tA = (unsigned char)(tAlpha * 255);
+          const char *title = endFadeIsWin ? "VICTORY!" : "DEFEATED";
+          Color tCol = endFadeIsWin ? (Color){255, 215, 0, tA} : (Color){220, 40, 40, tA};
+          int tSz  = 80;
+          int tW   = MeasureText(title, tSz);
+          DrawText(title, SCREEN_WIDTH / 2 - tW / 2, SCREEN_HEIGHT / 2 - 50, tSz, tCol);
+        }
+
+        // After 3 s: open settings menu automatically (once)
+        if (endFadeTimer >= fadeDur && !settingsOpen) {
+          settingsOpen  = true;
+          endFadeTimer  = -1.0f; // stop the fade ticker
+          Audio_PauseAll();     // pause music when menu auto-opens
+        }
+      }
+    }
+
+    // ─── Settings menu overlay (always on top) ────────────────────────────
+    if (settingsOpen) {
+      DrawSettingsMenu(currentMapIndex);
     }
 
     DrawFPS(10, 10);
@@ -1767,6 +2110,7 @@ int main(void) {
   if (bossInitialized) {
     Audio_UnloadBossAssets();
     UnloadTexture(texAgis);
+    UnloadTexture(texFish);
     UnloadProjectileAssets();
     UnloadBossAssets();
     UnloadBoomAssets();
@@ -1789,6 +2133,9 @@ int main(void) {
   UnloadMapData(&gameMap);
   UnloadRenderTexture(target);
   UnloadFont(gGameFont);
+  if (screenDissolveShader.id > 0) {
+    UnloadShader(screenDissolveShader);
+  }
   CloseWindow();
   return 0;
 }

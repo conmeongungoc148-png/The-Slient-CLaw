@@ -315,7 +315,8 @@ void UpdatePlayer(Player *player, GameMap *map, float deltaTime) {
         bool isLadder = (strstr(objLower, "ladder") != NULL) ||
                         (strstr(lowerName, "ladder") != NULL);
         bool isSpawn = (strstr(objLower, "spawn") != NULL);
-        if (isLadder || isSpawn)
+        bool isEnd = (strstr(objLower, "end") != NULL);
+        if (isLadder || isSpawn || isEnd)
           continue;
 
         float objX = obj->x + layer->offsetx;
@@ -473,7 +474,7 @@ void UpdatePlayer(Player *player, GameMap *map, float deltaTime) {
   }
 
   if (inWater) {
-    player->velocity.y -= (gravity + 600.0f) * deltaTime;
+    player->velocity.y -= (gravity + 1000.0f) * deltaTime;
     player->velocity.y *= 0.90f;
     player->velocity.x *= 0.92f;
     player->isJumping = false;
@@ -491,10 +492,14 @@ void UpdatePlayer(Player *player, GameMap *map, float deltaTime) {
 
   if (player->position.y < 0.0f) {
     player->position.y = 0.0f;
-    player->velocity.y = 0.0f;
+    if (player->velocity.y < 0.0f) {
+      player->velocity.y = 0.0f;
+    }
   } else if (player->position.y > mapHeightPixels - 64.0f) {
     player->position.y = mapHeightPixels - 64.0f;
-    player->velocity.y = 0.0f;
+    if (player->velocity.y > 0.0f) {
+      player->velocity.y = 0.0f;
+    }
     player->isJumping = false;
   }
 
@@ -663,6 +668,18 @@ static void ProcessLayers(cute_tiled_map_t *tiled_map,
             tmjObj->rotation = obj->rotation;
             tmjObj->visible = obj->visible;
             tmjObj->opacity = 1.0f;
+            tmjObj->customProperty[0] = '\0';
+            for (int k = 0; k < obj->property_count; k++) {
+              cute_tiled_property_t *p = &obj->properties[k];
+              if (p->name.ptr && strcmp(p->name.ptr, "end") == 0) {
+                strncpy(tmjObj->name, "end", 63);
+                tmjObj->name[63] = '\0';
+              }
+              if (p->type == CUTE_TILED_PROPERTY_STRING && p->data.string.ptr) {
+                strncpy(tmjObj->customProperty, p->data.string.ptr, 255);
+                tmjObj->customProperty[255] = '\0';
+              }
+            }
 
             if (obj->vert_count > 0 && obj->vert_type == 1) { // 1 is polygon
               tmjObj->polygonCount = obj->vert_count;

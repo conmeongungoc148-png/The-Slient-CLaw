@@ -51,7 +51,7 @@ void DrawHazardAttack(Boss *boss, Texture2D hazardTex);
 // Laser Skill
 void StartLaserAttack(Boss *boss, Vector2 playerPos);
 void UpdateLaserAttack(Boss *boss, Vector2 playerPos, float dt);
-void DrawLaserAttack(Boss *boss, Texture2D laserTex);
+void DrawLaserAttack(Boss *boss);
 
 // Rain Skill
 void StartRainAttack(Boss *boss);

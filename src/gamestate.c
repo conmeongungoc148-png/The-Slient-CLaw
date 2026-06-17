@@ -36,27 +36,11 @@ void DrawUI(int playerHP, int bossHP, int bossMaxHP) {
 }
 
 void DrawWinScreen(void) {
-    DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight(), (Color){0, 0, 0, 180});
-    
-    const char *text = "VICTORY!";
-    int fontSize = 80;
-    int textW = MeasureText(text, fontSize);
-    DrawText(text, (GetScreenWidth() - textW) / 2, GetScreenHeight() / 2 - 60, fontSize, GOLD);
-
-    const char *sub = "Press R to Retry  |  Press ESC to Quit";
-    int subW = MeasureText(sub, 24);
-    DrawText(sub, (GetScreenWidth() - subW) / 2, GetScreenHeight() / 2 + 40, 24, RAYWHITE);
+    // Win screen is now handled by endFadeTimer + settings menu in main.c
+    (void)0;
 }
 
 void DrawLoseScreen(void) {
-    DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight(), (Color){80, 0, 0, 180});
-    
-    const char *text = "DEFEATED";
-    int fontSize = 80;
-    int textW = MeasureText(text, fontSize);
-    DrawText(text, (GetScreenWidth() - textW) / 2, GetScreenHeight() / 2 - 60, fontSize, RED);
-
-    const char *sub = "Press R to Retry  |  Press ESC to Quit";
-    int subW = MeasureText(sub, 24);
-    DrawText(sub, (GetScreenWidth() - subW) / 2, GetScreenHeight() / 2 + 40, 24, RAYWHITE);
+    // Lose screen is now handled by endFadeTimer + settings menu in main.c
+    (void)0;
 }

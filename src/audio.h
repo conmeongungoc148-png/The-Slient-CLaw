@@ -37,9 +37,12 @@ void Audio_StopSFX(SfxID id);
 
 // Music controls & updates
 void Audio_Update(float dt, Boss *boss);
+void Audio_UpdateAmbient(int mapIndex, float dt);
 void Audio_StartIntroMusic(void);
 void Audio_PlaySFX_OnRoar(void);
 void Audio_ResetBossFight(void);
+void Audio_PauseAll(void);
+void Audio_ResumeAll(void);
 
 // Subtitle controls
 void Audio_DrawSubtitles(void);

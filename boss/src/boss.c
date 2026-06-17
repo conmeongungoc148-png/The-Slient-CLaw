@@ -10,7 +10,6 @@
 
 // Lazy-loaded sprites for visual effects
 static Texture2D explosionTex = {0};
-static Texture2D laserTex = {0};
 static Texture2D hazardTex = {0};
 static bool spritesLoaded = false;
 
@@ -56,17 +55,12 @@ int gPreIntroSlowWalk = 0;
 #define EXPLOSION_FRAMES 12
 #define EXPLOSION_FW 96
 #define EXPLOSION_FH 96
-#define LASER_FRAMES 8
-#define LASER_COLS 4
-#define LASER_FW 300
-#define LASER_FH 1309
 
 static Texture2D splashTexs[9] = {0};
 
 static void LoadBossSprites(void) {
     if (spritesLoaded) return;
     explosionTex = LoadTexture(GetBossAssetPath("assets/effects/explosion/Explosion.png"));
-    laserTex = LoadTexture(GetBossAssetPath("assets/effects/laser/spritesheet.png"));
     hazardTex = LoadTexture(GetBossAssetPath("assets/effects/hazard_sheet.png"));
     for (int i = 0; i < 9; i++) {
         char path[128];
@@ -99,7 +93,6 @@ static void LoadBossSprites(void) {
 void UnloadBossAssets(void) {
     if (spritesLoaded) {
         UnloadTexture(explosionTex);
-        UnloadTexture(laserTex);
         UnloadTexture(hazardTex);
         for (int i = 0; i < 9; i++) {
             UnloadTexture(splashTexs[i]);
@@ -110,7 +103,6 @@ void UnloadBossAssets(void) {
             statueTex[i] = (Texture2D){0};
         }
         explosionTex = (Texture2D){0};
-        laserTex = (Texture2D){0};
         hazardTex = (Texture2D){0};
 
         if (glowShaderLoaded) {
@@ -928,6 +920,10 @@ void DrawBossBody(Boss *boss, Texture2D spriteSheet, float cameraOffsetY) {
     if (boss->phase == BOSS_PHASE_4) tint = (Color){200, 50, 255, 255};  // Purple rage
 
     // Intro invisibility & black/white flashing (35s - 39s)
+    if (boss->state == BOSS_PRE_INTRO) {
+        return; // Completely invisible during pre-intro
+    }
+
     if (boss->state == BOSS_INTRO) {
         if (boss->introTimer < 35.0f) {
             return; // Completely invisible
@@ -1162,7 +1158,7 @@ void DrawBossSkills(Boss *boss) {
 
 
     // --- Draw Laser ---
-    DrawLaserAttack(boss, laserTex);
+    DrawLaserAttack(boss);
 
     // --- Draw Slam Warning + Shockwave ---
     DrawSlamAttack(boss);

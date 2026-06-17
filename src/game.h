@@ -16,6 +16,7 @@ typedef struct {
     float opacity;
     Point *polygon;
     int polygonCount;
+    char customProperty[256];
 } TMJObject;
 
 typedef struct {
