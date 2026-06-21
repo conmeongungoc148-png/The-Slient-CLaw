@@ -94,7 +94,7 @@ static void DrawFallbackArena(void) {
 int main(void) {
     srand((unsigned int)time(NULL));
 
-    InitWindow(WINDOW_WIDTH, WINDOW_HEIGHT, "Boss Fight - AGIS");
+    InitWindow(WINDOW_WIDTH, WINDOW_HEIGHT, "Silent Claw");
     InitAudioDevice();
     SetTargetFPS(60);
 

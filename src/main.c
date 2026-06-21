@@ -584,7 +584,7 @@ static float outroFlashTimer = 0.0f;
 int main(void) {
   setvbuf(stdout, NULL, _IONBF, 0);
   InitWindow(SCREEN_WIDTH, SCREEN_HEIGHT,
-             "The Forest - Full Screen Infinite Map");
+             "Silent Claw");
   SetExitKey(KEY_NULL);
   gGameFont = LoadFontEx("assets/other/MedievalSharp-Regular.ttf", 96, NULL, 0);
   SetTextureFilter(gGameFont.texture, TEXTURE_FILTER_BILINEAR);
