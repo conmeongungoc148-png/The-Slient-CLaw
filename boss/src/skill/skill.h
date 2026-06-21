@@ -61,6 +61,6 @@ void DrawRainAttack(Boss *boss);
 // Slam Skill
 void StartSlamAttack(Boss *boss, Vector2 playerPos);
 void UpdateSlamAttack(Boss *boss, float dt);
-void DrawSlamAttack(Boss *boss);
+void DrawSlamAttack(Boss *boss, Texture2D slamTex);
 
 #endif // SKILL_H

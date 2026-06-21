@@ -11,6 +11,8 @@
 // Lazy-loaded sprites for visual effects
 static Texture2D explosionTex = {0};
 static Texture2D hazardTex = {0};
+static Texture2D slamTex = {0};
+static Texture2D finalOrbTex = {0};
 static bool spritesLoaded = false;
 
 // Boss glow shader variables
@@ -62,6 +64,8 @@ static void LoadBossSprites(void) {
     if (spritesLoaded) return;
     explosionTex = LoadTexture(GetBossAssetPath("assets/effects/explosion/Explosion.png"));
     hazardTex = LoadTexture(GetBossAssetPath("assets/effects/hazard_sheet.png"));
+    slamTex = LoadTexture(GetBossAssetPath("assets/skills/Pixel Art VFX - Blood Mage - FREE Version/VFX2/sprite-sheet.png"));
+    finalOrbTex = LoadTexture(GetBossAssetPath("assets/skills/Free Pixel Effects Pack/13_vortex_spritesheet.png"));
     for (int i = 0; i < 9; i++) {
         char path[128];
         snprintf(path, sizeof(path), "assets/effects/vfx/splash/Frames/Vampire_skill2_frame%d.png", i + 1);
@@ -94,6 +98,7 @@ void UnloadBossAssets(void) {
     if (spritesLoaded) {
         UnloadTexture(explosionTex);
         UnloadTexture(hazardTex);
+        UnloadTexture(slamTex);
         for (int i = 0; i < 9; i++) {
             UnloadTexture(splashTexs[i]);
             splashTexs[i] = (Texture2D){0};
@@ -104,6 +109,9 @@ void UnloadBossAssets(void) {
         }
         explosionTex = (Texture2D){0};
         hazardTex = (Texture2D){0};
+        slamTex = (Texture2D){0};
+        UnloadTexture(finalOrbTex);
+        finalOrbTex = (Texture2D){0};
 
         if (glowShaderLoaded) {
             UnloadShader(glowShader);
@@ -1161,7 +1169,7 @@ void DrawBossSkills(Boss *boss) {
     DrawLaserAttack(boss);
 
     // --- Draw Slam Warning + Shockwave ---
-    DrawSlamAttack(boss);
+    DrawSlamAttack(boss, slamTex);
 
     // --- Draw Claw Attack ---
     DrawClawAttack(boss, splashTexs);
@@ -1324,4 +1332,8 @@ void BossCheckStatueHits(Boss *boss, Rectangle attackBox, Sound hitSfx, Sound sh
 
 float BossGetGroundY(float x) {
     return GetSurfaceYAtX(x);
+}
+
+Texture2D GetFinalOrbTexture(void) {
+    return finalOrbTex;
 }

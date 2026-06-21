@@ -122,8 +122,130 @@ void InitPlayer(Player *player, Vector2 pos) {
   player->frameTimer = 0.0f;
   player->isClimbing = false;
   LoadPlayerHitbox(&player->hitboxWidth, &player->hitboxHeight);
+  player->inWater = false;
+  player->wasInWater = false;
+  player->waterTimer = 0.0f;
+  player->outOfWaterTimer = 0.0f;
+  player->isDeadInWater = false;
+  player->waterDeathTimer = 0.0f;
+  player->waterDeathOverlayAlpha = 0.0f;
+  player->waterTeleported = false;
+  player->pendingShakeMagnitude = 0.0f;
+  player->pendingShakeDuration = 0.0f;
 }
+
+static bool FindClosestGroundOnLeft(GameMap *map, float playerX, Vector2 *outPos) {
+  float minDistance = 1000000.0f;
+  Vector2 bestSpawn = {0};
+  bool found = false;
+
+  for (int i = 0; i < map->layerCount; i++) {
+    TMJLayer *layer = &map->layers[i];
+    if (!layer->visible || strcmp(layer->type, "objectgroup") != 0)
+      continue;
+
+    char lowerName[64];
+    strncpy(lowerName, layer->name, 63);
+    lowerName[63] = '\0';
+    for (int c = 0; lowerName[c]; c++) {
+      if (lowerName[c] >= 'A' && lowerName[c] <= 'Z') {
+        lowerName[c] = lowerName[c] - 'A' + 'a';
+      }
+    }
+
+    bool isSolidLayer = (strstr(lowerName, "ground") != NULL) ||
+                        (strstr(lowerName, "solid") != NULL) ||
+                        (strstr(lowerName, "soild") != NULL) ||
+                        (strstr(lowerName, "block") != NULL);
+    if (!isSolidLayer)
+      continue;
+
+    for (int j = 0; j < layer->objectCount; j++) {
+      TMJObject *obj = &layer->objects[j];
+      if (obj->texture.id != 0)
+        continue;
+
+      char objLower[64];
+      strncpy(objLower, obj->name, 63);
+      objLower[63] = '\0';
+      for (int c = 0; objLower[c]; c++) {
+        if (objLower[c] >= 'A' && objLower[c] <= 'Z') {
+          objLower[c] = objLower[c] - 'A' + 'a';
+        }
+      }
+      if (strstr(objLower, "ladder") || strstr(objLower, "spawn") ||
+          strstr(objLower, "end")) {
+        continue;
+      }
+
+      float objLeft = obj->x + layer->offsetx;
+      float objRight = objLeft + obj->width;
+      float objTop = obj->y + layer->offsety;
+
+      // Check if this object is to the left of the player
+      if (objRight < playerX) {
+        float dist = playerX - objRight;
+        if (dist < minDistance) {
+          minDistance = dist;
+          float spawnX = objRight - 30.0f;
+          if (spawnX < objLeft + 10.0f) {
+            spawnX = objLeft + obj->width / 2.0f;
+          }
+          bestSpawn.x = spawnX;
+          bestSpawn.y = objTop - 64.0f - 10.0f;
+          found = true;
+        }
+      }
+    }
+  }
+
+  if (found) {
+    *outPos = bestSpawn;
+    return true;
+  }
+  return false;
+}
+
 void UpdatePlayer(Player *player, GameMap *map, float deltaTime) {
+  if (player->isDeadInWater) {
+    player->waterDeathTimer += deltaTime;
+    player->velocity = (Vector2){0, 0};
+
+    player->frameTimer += deltaTime;
+    if (player->frameTimer >= 0.1f) {
+      player->frameTimer = 0.0f;
+      player->currentFrame++;
+      if (player->currentFrame >= 4) {
+        player->currentFrame = 3;
+      }
+    }
+    player->isHurt = true;
+
+    if (player->waterDeathTimer < 1.0f) {
+      player->waterDeathOverlayAlpha = 0.0f;
+    } else if (player->waterDeathTimer < 1.8f) {
+      player->waterDeathOverlayAlpha = ((player->waterDeathTimer - 1.0f) / 0.8f) * 255.0f;
+    } else if (player->waterDeathTimer < 2.5f) {
+      player->waterDeathOverlayAlpha = (1.0f - (player->waterDeathTimer - 1.8f) / 0.7f) * 255.0f;
+
+      if (!player->waterTeleported) {
+        Vector2 teleportPos;
+        if (FindClosestGroundOnLeft(map, player->position.x, &teleportPos)) {
+          player->position = teleportPos;
+        } else {
+          player->position = (Vector2){50.0f, 1168.0f};
+        }
+        player->waterTeleported = true;
+      }
+    } else {
+      player->isDeadInWater = false;
+      player->waterTimer = 0.0f;
+      player->outOfWaterTimer = 0.0f;
+      player->isHurt = false;
+    }
+    return;
+  }
+
   const float gravity = 4000.0f;
   const float jumpForce = -990.0f;
   float playerRadius = player->hitboxWidth / 2.0f;
@@ -525,6 +647,27 @@ void UpdatePlayer(Player *player, GameMap *map, float deltaTime) {
       }
     }
   }
+
+  player->inWater = inWater;
+  if (player->inWater) {
+    player->outOfWaterTimer = 0.0f;
+    player->waterTimer += deltaTime;
+    if (player->waterTimer > 2.0f) {
+      player->isDeadInWater = true;
+      player->waterDeathTimer = 0.0f;
+      player->waterDeathOverlayAlpha = 0.0f;
+      player->waterTeleported = false;
+      player->currentFrame = 0;
+      player->frameTimer = 0.0f;
+      player->isHurt = true;
+    }
+  } else {
+    player->outOfWaterTimer += deltaTime;
+    if (player->outOfWaterTimer > 0.5f) {
+      player->waterTimer = 0.0f;
+    }
+  }
+  player->wasInWater = player->inWater;
 }
 void DrawPlayer(Player *player, Texture2D idle, Texture2D walk, Texture2D run,
                 Texture2D jump, Texture2D attack, Texture2D runJump,

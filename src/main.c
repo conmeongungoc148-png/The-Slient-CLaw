@@ -202,6 +202,28 @@ typedef struct {
 static MapSign mapSigns[MAX_MAP_SIGNS];
 static int mapSignCount = 0;
 
+// Treasure chest & Fish variables
+typedef struct {
+  Rectangle hitbox;
+  int hp;
+  bool active;
+  bool broken;
+  bool isObjectLoaded;
+} TreasureChest;
+
+typedef struct {
+  Vector2 position;
+  Vector2 velocity;
+  bool active;
+  bool collected;
+  float gravity;
+  float rotation;
+} PoppedFish;
+
+static TreasureChest mapTreasure = { {0, 0, 0, 0}, 0, false, false, false };
+static PoppedFish poppedFish = { {0, 0}, {0, 0}, false, false, 800.0f, 0.0f };
+static float fishMessageTimer = 0.0f;
+
 static void DrawSettingsMenu(int currentMapIndex) {
     // Darkened full-screen overlay
     DrawRectangle(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, (Color){0, 0, 0, 180});
@@ -349,6 +371,105 @@ static void DrawSettingsMenu(int currentMapIndex) {
              (Color){180, 180, 180, 180});
 }
 
+static Rectangle GetPlayerAttackHitbox(Player *p) {
+  Rectangle attackRect = {0};
+  if (p->isAttacking) {
+    float pw = p->hitboxWidth;
+    float ph = p->hitboxHeight;
+    float attackWidth = 50.0f;
+    float attackHeight = ph;
+    float px = p->position.x - pw / 2.0f;
+    float py = p->position.y + 64.0f - ph;
+    if (p->facingRight) {
+      attackRect = (Rectangle){ px + pw, py, attackWidth, attackHeight };
+    } else {
+      attackRect = (Rectangle){ px - attackWidth, py, attackWidth, attackHeight };
+    }
+  }
+  return attackRect;
+}
+
+static float GetMap2GroundY(GameMap *map, float x, float currentY) {
+  float groundLevel = 100000.0f;
+  for (int i = 0; i < map->layerCount; i++) {
+    TMJLayer *layer = &map->layers[i];
+    if (!layer->visible || strcmp(layer->type, "objectgroup") != 0)
+      continue;
+
+    char lowerName[64];
+    strncpy(lowerName, layer->name, 63);
+    lowerName[63] = '\0';
+    for (int c = 0; lowerName[c]; c++) {
+      if (lowerName[c] >= 'A' && lowerName[c] <= 'Z') {
+        lowerName[c] = lowerName[c] - 'A' + 'a';
+      }
+    }
+
+    bool isSolidLayer = (strstr(lowerName, "ground") != NULL) ||
+                        (strstr(lowerName, "solid") != NULL) ||
+                        (strstr(lowerName, "soild") != NULL) ||
+                        (strstr(lowerName, "block") != NULL);
+    bool isPlatformLayer = (strstr(lowerName, "platform") != NULL) ||
+                           (strstr(lowerName, "platfrom") != NULL);
+
+    if (!isSolidLayer && !isPlatformLayer)
+      continue;
+
+    for (int j = 0; j < layer->objectCount; j++) {
+      TMJObject *obj = &layer->objects[j];
+      if (obj->texture.id != 0)
+        continue;
+
+      char objLower[64];
+      strncpy(objLower, obj->name, 63);
+      objLower[63] = '\0';
+      for (int c = 0; objLower[c]; c++) {
+        if (objLower[c] >= 'A' && objLower[c] <= 'Z')
+          objLower[c] = objLower[c] - 'A' + 'a';
+      }
+      if (strstr(objLower, "ladder") || strstr(lowerName, "ladder") ||
+          strstr(objLower, "spawn") || strstr(objLower, "end"))
+        continue;
+
+      float objX = obj->x + layer->offsetx;
+      float objY = obj->y + layer->offsety;
+
+      if (obj->polygonCount > 0) {
+        for (int k = 0; k < obj->polygonCount; k++) {
+          Point p1 = obj->polygon[k];
+          Point p2 = obj->polygon[(k + 1) % obj->polygonCount];
+          float x1 = p1.x + objX;
+          float y1 = p1.y + objY;
+          float x2 = p2.x + objX;
+          float y2 = p2.y + objY;
+          float minX = (x1 < x2) ? x1 : x2;
+          float maxX = (x1 > x2) ? x1 : x2;
+
+          if (x >= minX - 1.0f && x <= maxX + 1.0f) {
+            float slopeY = y1 + (y2 - y1) * (x - x1) / (x2 - x1);
+            if (slopeY >= currentY - 8.0f && slopeY < groundLevel) {
+              groundLevel = slopeY;
+            }
+          }
+        }
+      } else {
+        float objLeft = objX;
+        float objRight = objX + obj->width;
+        float objTop = objY;
+        if (x >= objLeft && x <= objRight) {
+          if (objTop >= currentY - 8.0f && objTop < groundLevel) {
+            groundLevel = objTop;
+          }
+        }
+      }
+    }
+  }
+  if (groundLevel > 90000.0f) {
+    groundLevel = 450.0f; // reasonable fallback
+  }
+  return groundLevel;
+}
+
 static void ScanMapTriggers(GameMap *map, int currentMapIndex) {
   hasEndTrigger = false;
   endTriggerPos = (Vector2){0, 0};
@@ -356,6 +477,17 @@ static void ScanMapTriggers(GameMap *map, int currentMapIndex) {
   endTriggerIsRect = false;
 
   mapSignCount = 0;
+
+  // Reset treasure chest & fish states
+  mapTreasure.isObjectLoaded = false;
+  mapTreasure.active = false;
+  mapTreasure.broken = false;
+  mapTreasure.hp = 0;
+  poppedFish.active = false;
+  poppedFish.collected = false;
+  poppedFish.velocity = (Vector2){0, 0};
+  poppedFish.rotation = 0.0f;
+  fishMessageTimer = 0.0f;
 
   if (currentMapIndex == 0) { // Map 2 (index 0)
     for (int i = 0; i < map->layerCount; i++) {
@@ -413,7 +545,32 @@ static void ScanMapTriggers(GameMap *map, int currentMapIndex) {
             }
           }
         }
+        // Scan for treasure chest
+        if (strcmp(layer->name, "treasure") == 0) {
+          for (int j = 0; j < layer->objectCount; j++) {
+            TMJObject *obj = &layer->objects[j];
+            float ox = obj->x + layer->offsetx;
+            float oy = obj->y + layer->offsety;
+            mapTreasure.hitbox = (Rectangle){ox, oy, obj->width, obj->height};
+            mapTreasure.hp = 1;
+            mapTreasure.active = true;
+            mapTreasure.broken = false;
+            mapTreasure.isObjectLoaded = true;
+            TraceLog(LOG_INFO, "[TREASURE] Loaded treasure hitbox: (%.2f, %.2f, %.2f, %.2f)", 
+                     mapTreasure.hitbox.x, mapTreasure.hitbox.y, mapTreasure.hitbox.width, mapTreasure.hitbox.height);
+          }
+        }
       }
+    }
+    // Add programmatic sign for fish reminder near the end of the map (same height as "Get ready" sign)
+    if (mapSignCount < MAX_MAP_SIGNS) {
+      MapSign *s = &mapSigns[mapSignCount];
+      s->position = (Vector2){ 9520.0f, 479.3f };
+      strcpy(s->message, "Go back and get the fish to pass!");
+      s->alpha = 0.0f;
+      s->isColliding = false;
+      mapSignCount++;
+      TraceLog(LOG_INFO, "[SIGN] Loaded programmatic fish reminder sign at (%.2f, %.2f)", s->position.x, s->position.y);
     }
   }
 }
@@ -452,10 +609,19 @@ int main(void) {
   const char *mapList[] = {"assets/thesecondmap.tmj",
                            "boss/assets/boss map 1v1.tmj"};
   int totalMaps = 2;
+#ifdef OUTRO_ONLY
+  int currentMapIndex = 1;
+#else
   int currentMapIndex = 0;
+#endif
 
   GameMap gameMap = LoadMapData(mapList[currentMapIndex]);
   ScanMapTriggers(&gameMap, currentMapIndex);
+  if (currentMapIndex == 0) {
+    if (texFish.id == 0) {
+      texFish = LoadTexture("boss/assets/other/fish.png");
+    }
+  }
 
   // Find spawn point from the map, or fallback to default
   Vector2 startPos = FindSpawnPoint(&gameMap, (Vector2){50.0f, 1168.0f});
@@ -478,6 +644,50 @@ int main(void) {
   float bgMinX, bgMaxX, bgMinY, bgMaxY;
   GetMapBackgroundBounds(&gameMap, &bgMinX, &bgMaxX, &bgMinY, &bgMaxY);
   CameraSetBounds(&myCam, bgMinX, bgMinY, bgMaxX - bgMinX, bgMaxY - bgMinY);
+
+#ifdef OUTRO_ONLY
+  {
+    // Lazy load assets for boss fight
+    Audio_LoadBossAssets();
+
+    texAgis = LoadTexture("boss/assets/boss/sprites/agis.png");
+    texFish = LoadTexture("boss/assets/other/fish.png");
+    cuteBossMap = MapLoad("boss/assets/boss map 1v1.tmj");
+    BossSetArenaMap(cuteBossMap, 0.0f, 419.0f);
+    OrbSetArenaMap(cuteBossMap, 0.0f, 419.0f);
+
+    bossTargetPos = FindBossPosition(&gameMap, (Vector2){608.0f, 220.0f});
+    InitBossPlayer(&bossPlayer, (Vector2){200.0f, 419.0f}, 419.0f);
+    InitBoss(&boss, bossTargetPos, bossTargetPos);
+    
+    // Force outro cutscene state directly
+    boss.state = BOSS_OUTRO;
+    boss.outroTimer = 0.0f;
+    boss.hp = 0;
+
+    boss.scale = 3.7f;
+    InitProjectileManager(&pm);
+    InitOrbManager(&om);
+
+    bossInitialized = true;
+    prevClawActive = false;
+    prevLaserActive = false;
+    prevHazardCount = 0;
+    clawSlashPlayed = false;
+    prevRainActive = false;
+    Audio_StopSFX(SFX_ALARM);
+    bossGameState = STATE_PLAYING;
+
+    // Reset boss player position
+    bossPlayer.position = (Vector2){200.0f, 419.0f};
+    myCam.zoom = 0.88f;
+    CameraLookAt(&myCam, bossTargetPos);
+
+    // Recalculate camera bounds for boss map
+    GetMapBackgroundBounds(&gameMap, &bgMinX, &bgMaxX, &bgMinY, &bgMaxY);
+    CameraSetBounds(&myCam, bgMinX, bgMinY, bgMaxX - bgMinX, bgMaxY - bgMinY);
+  }
+#endif
 
   while (!WindowShouldClose()) {
     float dt = GetFrameTime();
@@ -529,6 +739,10 @@ int main(void) {
         if (cuteBossMap) { MapUnload(cuteBossMap); cuteBossMap = NULL; }
         bossInitialized = false;
       }
+      if (texFish.id > 0) {
+        UnloadTexture(texFish);
+        texFish.id = 0;
+      }
       UnloadMapData(&gameMap);
       gameMap = LoadMapData(mapList[currentMapIndex]);
       ResetRainSystem();
@@ -543,6 +757,11 @@ int main(void) {
         bossTargetPos = FindBossPosition(&gameMap, (Vector2){608.0f, 220.0f});
         InitBossPlayer(&bossPlayer, (Vector2){200.0f, 419.0f}, 419.0f);
         InitBoss(&boss, bossTargetPos, bossTargetPos);
+#ifdef OUTRO_ONLY
+        boss.state = BOSS_OUTRO;
+        boss.outroTimer = 0.0f;
+        boss.hp = 0;
+#endif
         boss.scale = 3.7f;
         InitProjectileManager(&pm);
         InitOrbManager(&om);
@@ -562,6 +781,9 @@ int main(void) {
         player.freezeTimer = 0.0f;
         myCam.zoom = 1.30f;
         CameraLookAt(&myCam, player.position);
+        if (texFish.id == 0) {
+          texFish = LoadTexture("boss/assets/other/fish.png");
+        }
       }
       GetMapBackgroundBounds(&gameMap, &bgMinX, &bgMaxX, &bgMinY, &bgMaxY);
       CameraSetBounds(&myCam, bgMinX, bgMinY, bgMaxX - bgMinX, bgMaxY - bgMinY);
@@ -896,12 +1118,10 @@ int main(void) {
               float dx = boss.outroYellowOrbPos.x - boss.outroRedOrbPos.x;
               float dy = boss.outroYellowOrbPos.y - boss.outroRedOrbPos.y;
               if (sqrtf(dx * dx + dy * dy) < boss.outroRedOrbRadius) {
-                boss.ringShockwaveTimer = 0.01f;
                 boss.outroAuraActive = true;
                 boss.outroAuraScale = 0.0f;
                 boss.outroYellowOrbActive = false;
                 boss.outroRedOrbActive = false;
-                Audio_PlaySFX(SFX_DAMAGE);
                 outroFlashTimer = 1.5f;
               }
             }
@@ -976,7 +1196,7 @@ int main(void) {
             }
           }
 
-          if (playerReachedEnd) {
+          if (playerReachedEnd && poppedFish.collected) {
             screenDissolveActive = true;
             screenDissolveTimer = 0.0f;
             screenDissolveMapSwitched = false;
@@ -987,12 +1207,22 @@ int main(void) {
         // Update sign messages collision and fade-in
         for (int k = 0; k < mapSignCount; k++) {
           MapSign *s = &mapSigns[k];
+          
+          // Dynamically clear the reminder message if the fish is already collected
+          if (s->position.x == 9520.0f && s->position.y == 479.3f) {
+            if (poppedFish.collected) {
+              strcpy(s->message, "");
+            } else {
+              strcpy(s->message, "Go back and get the fish to pass!");
+            }
+          }
+
           Vector2 playerCenter = {
             player.position.x,
             player.position.y + 64.0f - player.hitboxHeight / 2.0f
           };
           float dist = Vector2Distance(playerCenter, s->position);
-          if (dist < 50.0f) {
+          if (dist < 50.0f && strlen(s->message) > 0) {
             s->isColliding = true;
             s->alpha += GetFrameTime() * 3.0f;
             if (s->alpha > 1.0f) s->alpha = 1.0f;
@@ -1000,6 +1230,62 @@ int main(void) {
             s->isColliding = false;
             s->alpha = 0.0f;
           }
+        }
+
+        // Update treasure chest and fish
+        if (mapTreasure.isObjectLoaded && mapTreasure.active && mapTreasure.hp > 0) {
+          Rectangle attackRect = GetPlayerAttackHitbox(&player);
+          if (player.isAttacking && CheckCollisionRecs(attackRect, mapTreasure.hitbox)) {
+            mapTreasure.hp = 0;
+            mapTreasure.active = false;
+            mapTreasure.broken = true;
+
+            // Spawn fish jumping out
+            poppedFish.active = true;
+            poppedFish.collected = false;
+            poppedFish.position = (Vector2){
+              mapTreasure.hitbox.x + mapTreasure.hitbox.width / 2.0f,
+              mapTreasure.hitbox.y + mapTreasure.hitbox.height / 2.0f
+            };
+            poppedFish.velocity = (Vector2){ (float)GetRandomValue(-100, 100), -350.0f };
+            poppedFish.rotation = 0.0f;
+            TraceLog(LOG_INFO, "[TREASURE] Chest hit! Spawning fish at (%.2f, %.2f) with velocity (%.2f, %.2f)",
+                     poppedFish.position.x, poppedFish.position.y, poppedFish.velocity.x, poppedFish.velocity.y);
+          }
+        }
+
+        if (poppedFish.active && !poppedFish.collected) {
+          // Physics update
+          poppedFish.velocity.y += poppedFish.gravity * dt;
+          poppedFish.position.x += poppedFish.velocity.x * dt;
+          poppedFish.position.y += poppedFish.velocity.y * dt;
+          poppedFish.rotation += 360.0f * dt;
+
+          float groundY = GetMap2GroundY(&gameMap, poppedFish.position.x, poppedFish.position.y);
+          if (poppedFish.position.y >= groundY - 8.0f) {
+            poppedFish.position.y = groundY - 8.0f;
+            poppedFish.velocity = (Vector2){0, 0};
+            poppedFish.rotation = 0.0f;
+          }
+
+          // Player proximity and pickup check
+          Vector2 playerCenter = {
+            player.position.x,
+            player.position.y + 64.0f - player.hitboxHeight / 2.0f
+          };
+          float dist = Vector2Distance(poppedFish.position, playerCenter);
+          if (dist < 40.0f) {
+            if (IsKeyPressed(KEY_E)) {
+              poppedFish.collected = true;
+              poppedFish.active = false;
+              fishMessageTimer = 3.0f;
+              TraceLog(LOG_INFO, "[FISH] Fish collected by player!");
+            }
+          }
+        }
+
+        if (fishMessageTimer > 0.0f) {
+          fishMessageTimer -= dt;
         }
       }
 
@@ -1032,6 +1318,10 @@ int main(void) {
         }
         bossInitialized = false;
       }
+      if (texFish.id > 0) {
+        UnloadTexture(texFish);
+        texFish.id = 0;
+      }
 
       UnloadMapData(&gameMap);
       gameMap = LoadMapData(mapList[currentMapIndex]);
@@ -1052,6 +1342,11 @@ int main(void) {
         bossTargetPos = FindBossPosition(&gameMap, (Vector2){608.0f, 220.0f});
         InitBossPlayer(&bossPlayer, (Vector2){200.0f, 419.0f}, 419.0f);
         InitBoss(&boss, bossTargetPos, bossTargetPos);
+#ifdef OUTRO_ONLY
+        boss.state = BOSS_OUTRO;
+        boss.outroTimer = 0.0f;
+        boss.hp = 0;
+#endif
         boss.scale = 3.7f;
         InitProjectileManager(&pm);
         InitOrbManager(&om);
@@ -1077,6 +1372,9 @@ int main(void) {
         player.isAttacking = false;
         player.isJumping = false;
         player.freezeTimer = 0.0f;
+        if (texFish.id == 0) {
+          texFish = LoadTexture("boss/assets/other/fish.png");
+        }
       }
 
       // Snap camera instantly to new location
@@ -1640,16 +1938,17 @@ int main(void) {
 
       if (boss.state == BOSS_OUTRO) {
         if (boss.outroRedOrbActive) {
-          Texture2D redOrbTex = GetOrbDamageTexture();
+          Texture2D redOrbTex = GetFinalOrbTexture();
           if (redOrbTex.id > 0) {
-            float size = boss.outroRedOrbRadius * 2.5f;
-            Rectangle source = {0, 0, 128.0f, 128.0f};
+            int frame = (int)(boss.outroTimer / 0.06f) % 61;
+            int col = frame % 8;
+            int row = frame / 8;
+            Rectangle source = {(float)col * 100.0f, (float)row * 100.0f, 100.0f, 100.0f};
+            float size = boss.outroRedOrbRadius * 3.0f; // 2.5f * 1.2 = 3.0f (20% larger than original)
             Rectangle dest = {boss.outroRedOrbPos.x, boss.outroRedOrbPos.y,
                               size, size};
             Vector2 origin = {size / 2.0f, size / 2.0f};
-            DrawTexturePro(redOrbTex, source, dest, origin,
-                           boss.outroTimer * -100.0f,
-                           (Color){255, 100, 100, 255});
+            DrawTexturePro(redOrbTex, source, dest, origin, 0.0f, WHITE);
           } else {
             DrawCircleV(boss.outroRedOrbPos, boss.outroRedOrbRadius,
                         (Color){255, 60, 60, 255});
@@ -1891,6 +2190,12 @@ int main(void) {
         }
       }
       if (currentMapIndex == 0) {
+        if (mapTreasure.active && mapTreasure.hp > 0) {
+          Vector2 chestCenter = { mapTreasure.hitbox.x + mapTreasure.hitbox.width / 2.0f, mapTreasure.hitbox.y + mapTreasure.hitbox.height / 2.0f };
+          float glowPulse = (sinf(GetTime() * 3.0f) + 1.0f) * 0.5f;
+          Color glowColor = (Color){ 0, 200, 255, (unsigned char)(120 + 60 * glowPulse) };
+          DrawCircleGradient((int)chestCenter.x, (int)chestCenter.y, 30.0f, glowColor, (Color){ 0, 200, 255, 0 });
+        }
         DrawTwilightOverlay(&myCam);
       }
       DrawPlayer(&player, texIdle, texWalk, texRun, texJump, texAttack,
@@ -1903,18 +2208,73 @@ int main(void) {
       if (currentMapIndex == 0) {
         for (int k = 0; k < mapSignCount; k++) {
           MapSign *s = &mapSigns[k];
-          if (s->alpha > 0.0f) {
+          if (s->alpha > 0.0f && strlen(s->message) > 0) {
             Color textColor = WHITE;
             if (strcmp(s->message, "Get ready, I will finish you! my child") == 0) {
               textColor = RED;
             }
             Vector2 size = MeasureTextEx(gGameFont, s->message, 15, 1);
             Vector2 textPos = { s->position.x - size.x / 2.0f, s->position.y - 100.0f - size.y / 2.0f };
+            
+            // Clamp textPos.x within map bounds to prevent going off-map
+            float minX = myCam.bounds.x;
+            float maxX = myCam.bounds.x + myCam.bounds.width;
+            if (textPos.x < minX) {
+              textPos.x = minX;
+            }
+            if (textPos.x + size.x > maxX) {
+              textPos.x = maxX - size.x;
+            }
+
             // Draw shadow
             DrawTextEx(gGameFont, s->message, (Vector2){ textPos.x + 1, textPos.y + 1 }, 15, 1, Fade(BLACK, s->alpha * 0.8f));
             // Draw text
             DrawTextEx(gGameFont, s->message, textPos, 15, 1, Fade(textColor, s->alpha));
           }
+        }
+
+        // Draw popped fish
+        if (poppedFish.active && !poppedFish.collected && texFish.id > 0) {
+          Rectangle fishSrc = { 0, 0, (float)texFish.width, (float)texFish.height };
+          float destSize = 24.0f;
+          Rectangle fishDest = {
+            poppedFish.position.x,
+            poppedFish.position.y,
+            destSize,
+            destSize
+          };
+          Vector2 origin = { destSize / 2.0f, destSize / 2.0f };
+          DrawTexturePro(texFish, fishSrc, fishDest, origin, poppedFish.rotation, WHITE);
+
+          // Proximity E prompt
+          Vector2 playerCenter = {
+            player.position.x,
+            player.position.y + 64.0f - player.hitboxHeight / 2.0f
+          };
+          float dist = Vector2Distance(poppedFish.position, playerCenter);
+          if (dist < 40.0f) {
+            const char *promptStr = "Press [E] to pick up";
+            Vector2 promptSize = MeasureTextEx(gGameFont, promptStr, 12, 1);
+            Vector2 promptPos = {
+              poppedFish.position.x - promptSize.x / 2.0f,
+              poppedFish.position.y - 25.0f - promptSize.y / 2.0f
+            };
+            DrawTextEx(gGameFont, promptStr, (Vector2){ promptPos.x + 1, promptPos.y + 1 }, 12, 1, Fade(BLACK, 0.8f));
+            DrawTextEx(gGameFont, promptStr, promptPos, 12, 1, YELLOW);
+          }
+        }
+
+        // Float collection message
+        if (fishMessageTimer > 0.0f) {
+          const char *msgStr = "You found the fish!";
+          Vector2 msgSize = MeasureTextEx(gGameFont, msgStr, 14, 1);
+          float floatOffset = (3.0f - fishMessageTimer) * 20.0f;
+          Vector2 msgPos = {
+            player.position.x - msgSize.x / 2.0f,
+            player.position.y + 64.0f - player.hitboxHeight - 20.0f - floatOffset
+          };
+          DrawTextEx(gGameFont, msgStr, (Vector2){ msgPos.x + 1, msgPos.y + 1 }, 14, 1, Fade(BLACK, fishMessageTimer / 3.0f * 0.9f));
+          DrawTextEx(gGameFont, msgStr, msgPos, 14, 1, Fade(GREEN, fishMessageTimer / 3.0f));
         }
       }
     }
@@ -1980,10 +2340,16 @@ int main(void) {
     if (useScreenDissolve || useGrayscale || useShockwave)
       EndShaderMode();
 
+    if (currentMapIndex == 0 && player.isDeadInWater) {
+      DrawRectangle(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, (Color){0, 0, 0, (unsigned char)player.waterDeathOverlayAlpha});
+    }
+
     if (currentMapIndex == 1 && bossInitialized) {
       if (boss.state == BOSS_FIGHTING || boss.state == BOSS_DYING ||
           boss.state == BOSS_DEFEATED || boss.state == BOSS_OUTRO) {
-        DrawUI(bossPlayer.hp, boss.hp, boss.maxHp);
+        DrawUI(bossPlayer.hp, boss.hp, boss.maxHp,
+               boss.state == BOSS_OUTRO || boss.state == BOSS_DYING ||
+               boss.state == BOSS_DEFEATED);
 
         const char *phaseText = "Phase 1";
         if (boss.phase == BOSS_PHASE_2)
@@ -2102,7 +2468,6 @@ int main(void) {
       DrawSettingsMenu(currentMapIndex);
     }
 
-    DrawFPS(10, 10);
     EndDrawing();
   }
 
@@ -2120,6 +2485,10 @@ int main(void) {
       MapUnload(cuteBossMap);
       cuteBossMap = NULL;
     }
+  }
+  if (texFish.id > 0) {
+    UnloadTexture(texFish);
+    texFish.id = 0;
   }
   Audio_CloseDevice();
 

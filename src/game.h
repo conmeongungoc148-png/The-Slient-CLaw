@@ -67,6 +67,16 @@ typedef struct {
     bool isClimbing;   // Trạng thái trèo thang
     float hitboxWidth;
     float hitboxHeight;
+    bool inWater;
+    bool wasInWater;
+    float waterTimer;
+    float outOfWaterTimer;
+    bool isDeadInWater;
+    float waterDeathTimer;
+    float waterDeathOverlayAlpha;
+    bool waterTeleported;
+    float pendingShakeMagnitude;
+    float pendingShakeDuration;
 } Player;
 
 // --- API ---

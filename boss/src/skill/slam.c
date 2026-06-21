@@ -35,7 +35,7 @@ void UpdateSlamAttack(Boss *boss, float dt) {
     }
 }
 
-void DrawSlamAttack(Boss *boss) {
+void DrawSlamAttack(Boss *boss, Texture2D slamTex) {
     if (boss->slamActive) {
         if (boss->slamWarningTime > 0) {
             // WARNING PHASE: vòng tròn nhấp nháy tại vị trí sẽ đập
@@ -64,14 +64,34 @@ void DrawSlamAttack(Boss *boss) {
             DrawText("!", (int)boss->slamPos.x - 8, (int)boss->slamPos.y - 50, 40,
                 (Color){255, 255, 0, (unsigned char)(blink * 255)});
         } else {
-            // ACTIVE PHASE: shockwave expanding
-            float alpha = boss->slamTimer / SLAM_DURATION;
-            DrawCircleLines((int)boss->slamPos.x, (int)boss->slamPos.y, boss->shockwaveRadius, 
-                (Color){255, 150, 0, (unsigned char)(alpha * 255)});
-            DrawCircleLines((int)boss->slamPos.x, (int)boss->slamPos.y, boss->shockwaveRadius * 0.7f, 
-                (Color){255, 200, 50, (unsigned char)(alpha * 200)});
-            // Impact point
-            DrawCircleV(boss->slamPos, 15.0f * alpha, (Color){255, 100, 0, (unsigned char)(alpha * 200)});
+            // ACTIVE PHASE: draw Blood Mage VFX2 sprite sheet animation
+            if (slamTex.id > 0) {
+                float progress = 1.0f - (boss->slamTimer / SLAM_DURATION);
+                if (progress < 0.0f) progress = 0.0f;
+                if (progress > 1.0f) progress = 1.0f;
+                
+                int frame = (int)(progress * 12.0f);
+                if (frame > 11) frame = 11;
+                
+                Rectangle src = { (float)(frame * 128), 0.0f, 128.0f, 128.0f };
+                float destSize = 600.0f;
+                Rectangle dest = {
+                    boss->slamPos.x,
+                    boss->slamPos.y,
+                    destSize,
+                    destSize
+                };
+                Vector2 origin = { destSize / 2.0f, destSize / 2.0f }; // Center-Center origin
+                DrawTexturePro(slamTex, src, dest, origin, 0.0f, WHITE);
+            } else {
+                // Fallback procedural visual in case texture loading failed
+                float alpha = boss->slamTimer / SLAM_DURATION;
+                DrawCircleLines((int)boss->slamPos.x, (int)boss->slamPos.y, boss->shockwaveRadius, 
+                    (Color){255, 150, 0, (unsigned char)(alpha * 255)});
+                DrawCircleLines((int)boss->slamPos.x, (int)boss->slamPos.y, boss->shockwaveRadius * 0.7f, 
+                    (Color){255, 200, 50, (unsigned char)(alpha * 200)});
+                DrawCircleV(boss->slamPos, 15.0f * alpha, (Color){255, 100, 0, (unsigned char)(alpha * 200)});
+            }
         }
     }
 }

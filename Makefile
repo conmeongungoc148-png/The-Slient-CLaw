@@ -51,4 +51,12 @@ boss-run:
 boss-clean:
 	$(MAKE) -C boss clean
 
-.PHONY: all run clean boss boss-run boss-clean
+# Outro Cutscene Only target
+outro: CFLAGS += -DOUTRO_ONLY
+outro: EXE = outro.exe
+outro: all
+
+outro-run: outro
+	./outro.exe
+
+.PHONY: all run clean boss boss-run boss-clean outro outro-run

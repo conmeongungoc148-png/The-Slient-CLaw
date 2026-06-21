@@ -19,7 +19,7 @@ typedef enum {
     STATE_LOSE
 } GameState;
 
-void DrawUI(int playerHP, int bossHP, int bossMaxHP);
+void DrawUI(int playerHP, int bossHP, int bossMaxHP, bool isOutro);
 void DrawWinScreen(void);
 void DrawLoseScreen(void);
 

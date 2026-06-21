@@ -46,8 +46,8 @@ void main()
 
     float border = 0.05;
     if (n < threshold + border) {
-        // Magical purple/magenta border to match evil wizard portal transition
-        finalColor = vec4(0.8, 0.1, 0.9, texelColor.a) * colDiffuse * fragColor * 2.0;
+        // Black border
+        finalColor = vec4(0.0, 0.0, 0.0, texelColor.a);
     } else {
         finalColor = grayColor * colDiffuse * fragColor;
     }

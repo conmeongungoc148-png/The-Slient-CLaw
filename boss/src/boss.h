@@ -260,5 +260,6 @@ bool CheckPlayerInLaser(Vector2 playerPos, Vector2 laserStart, Vector2 laserEnd,
 bool CheckPlayerInClawZone(Vector2 playerPos, ClawZone zone);
 float BossGetGroundY(float x);
 void UnloadBossAssets(void);
+Texture2D GetFinalOrbTexture(void);
 
 #endif // BOSS_H

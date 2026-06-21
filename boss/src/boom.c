@@ -19,7 +19,6 @@ static Texture2D boomStartTex = {0};   // part1: 8 frames
 static Texture2D boomLoopTex  = {0};   // part2: 5 frames
 static Texture2D boomEndTex   = {0};   // part3: 6 frames
 static Texture2D ringOrbTex   = {0};   // ring damage orb asset
-static Texture2D boomLaserTex = {0};   // laser spritesheet
 static bool boomLoaded = false;
 
 #define BOOM_FRAME 128
@@ -81,7 +80,6 @@ static void LoadBoomAssets(void) {
     boomLoopTex  = LoadTexture(GetBossAssetPath("assets/effects/boom/part2(loop)/sprite-sheet.png"));
     boomEndTex   = LoadTexture(GetBossAssetPath("assets/effects/boom/part3(end)/sprite-sheet.png"));
     ringOrbTex   = LoadTexture(GetBossAssetPath("assets/effects/vfx/orbdamage/sprite-sheet.png"));
-    boomLaserTex = LoadTexture(GetBossAssetPath("assets/effects/laser/spritesheet.png"));
     boomLoaded = true;
 }
 
@@ -91,12 +89,10 @@ void UnloadBoomAssets(void) {
         UnloadTexture(boomLoopTex);
         UnloadTexture(boomEndTex);
         UnloadTexture(ringOrbTex);
-        UnloadTexture(boomLaserTex);
         boomStartTex = (Texture2D){0};
         boomLoopTex = (Texture2D){0};
         boomEndTex = (Texture2D){0};
         ringOrbTex = (Texture2D){0};
-        boomLaserTex = (Texture2D){0};
         boomLoaded = false;
     }
     for (int i = 0; i < MAX_RING_ORBS; i++) ringOrbs[i].active = false;
@@ -557,7 +553,7 @@ void DrawBooms(Boss *boss) {
                             b->position.y + beamDir[i].y * maxLength };
             DrawLineEx(b->position, end, 3.0f, (Color){255, 60, 60, (unsigned char)(80 + blink*120)});
         } else if (beamFire[i] > 0.0f) {
-            // Firing: Draw animated laser texture using boomLaserTex!
+            // Firing: Draw Raylib red laser (thick line, fade over time)
             float maxLength = GetBeamLength(b->position, beamDir[i]);
             float initTime = GetBeamInitialFireTime(boss, i);
             float elapsed = initTime - beamFire[i];
@@ -565,60 +561,13 @@ void DrawBooms(Boss *boss) {
             if (growRatio > 1.0f) growRatio = 1.0f;
             float currentLength = maxLength * growRatio;
 
-            if (boomLaserTex.id > 0) {
-                Vector2 start = b->position;
-                Vector2 dir = beamDir[i];
-                float angle = atan2f(dir.y, dir.x) * 180.0f / 3.14159265f; // RAD2DEG
-                
-                // Animation speed: 20 FPS
-                int frameIdx = (int)(elapsed * 20.0f);
-                if (frameIdx >= BOOM_LASER_FRAMES) {
-                    frameIdx = BOOM_LASER_FRAMES - 1; // Hold on final frame
-                }
-                
-                int col = frameIdx % BOOM_LASER_COLS;
-                int row = frameIdx / BOOM_LASER_COLS;
-                
-                float thickness = BEAM_WIDTH; // 48.0f
-                float extraLength = 50.0f; // slightly into ground
-                float drawLength = currentLength + extraLength;
-                
-                // Keep the laser head (bottom part of spritesheet frame) unstretched:
-                float scale = thickness / (float)BOOM_LASER_FW; 
-                float headSourceHeight = 300.0f; 
-                float headLength = headSourceHeight * scale;
-                
-                // Fade out laser towards the end of its duration
-                float alpha = 1.0f;
-                if (beamFire[i] < 0.15f) {
-                    alpha = beamFire[i] / 0.15f; // Fade down to 0 in last 0.15s
-                }
-                Color tint = Fade(WHITE, alpha);
-                
-                // 1. Draw body part (stretched)
-                float bodySourceHeight = (float)BOOM_LASER_FH - headSourceHeight;
-                float bodyLength = drawLength - headLength;
-                if (bodyLength < 0.0f) bodyLength = 0.0f;
-                
-                Rectangle bodySource = { (float)(col * BOOM_LASER_FW), (float)(row * BOOM_LASER_FH), (float)BOOM_LASER_FW, bodySourceHeight };
-                Rectangle bodyDest = { start.x, start.y, thickness, bodyLength };
-                Vector2 bodyOrigin = { thickness / 2.0f, 0.0f };
-                DrawTexturePro(boomLaserTex, bodySource, bodyDest, bodyOrigin, angle - 90.0f, tint);
-                
-                // 2. Draw head part (unstretched)
-                Rectangle headSource = { (float)(col * BOOM_LASER_FW), (float)(row * BOOM_LASER_FH) + bodySourceHeight, (float)BOOM_LASER_FW, headSourceHeight };
-                Vector2 headStart = { start.x + dir.x * bodyLength, start.y + dir.y * bodyLength };
-                Rectangle headDest = { headStart.x, headStart.y, thickness, headLength };
-                Vector2 headOrigin = { thickness / 2.0f, 0.0f };
-                DrawTexturePro(boomLaserTex, headSource, headDest, headOrigin, angle - 90.0f, tint);
-            } else {
-                // Fallback Firing: luồng dày, fade theo thời gian còn lại.
-                float a = beamFire[i] / GetBeamInitialFireTime(boss, i);
-                Vector2 end = { b->position.x + beamDir[i].x * currentLength,
-                                b->position.y + beamDir[i].y * currentLength };
-                DrawLineEx(b->position, end, BEAM_WIDTH, (Color){255, 40, 40, (unsigned char)(200*a)});
-                DrawLineEx(b->position, end, BEAM_WIDTH*0.5f, (Color){255, 200, 200, (unsigned char)(220*a)});
-            }
+            float a = beamFire[i] / initTime;
+            Vector2 end = { b->position.x + beamDir[i].x * currentLength,
+                            b->position.y + beamDir[i].y * currentLength };
+            BeginBlendMode(BLEND_ADDITIVE);
+            DrawLineEx(b->position, end, BEAM_WIDTH, (Color){255, 40, 40, (unsigned char)(200*a)});
+            DrawLineEx(b->position, end, BEAM_WIDTH*0.5f, (Color){255, 200, 200, (unsigned char)(220*a)});
+            EndBlendMode();
         }
     }
 

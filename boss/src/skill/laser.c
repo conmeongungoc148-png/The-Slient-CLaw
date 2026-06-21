@@ -5,7 +5,13 @@ void StartLaserAttack(Boss *boss, Vector2 playerPos) {
     boss->laserActive = true;
     boss->laserChargeTime = LASER_CHARGE_TIME;
     boss->laserDuration = LASER_DURATION;
-    boss->laserStart = boss->position;
+    
+    Vector2 startPos = boss->booms[1].position;
+    if (startPos.x == 0.0f && startPos.y == 0.0f) {
+        startPos = (Vector2){ 640.0f, 200.0f };
+    }
+    boss->laserStart = startPos;
+    
     // Project player xuống platform — dù player đang nhảy thì lock vẫn ở mặt sàn
     boss->laserEnd = (Vector2){ playerPos.x, BossGetGroundY(playerPos.x) };
     boss->laserDirection = (Vector2){1, 0};  // Sẽ được lock khi warning kết thúc
@@ -13,8 +19,12 @@ void StartLaserAttack(Boss *boss, Vector2 playerPos) {
 
 void UpdateLaserAttack(Boss *boss, Vector2 playerPos, float dt) {
     if (boss->laserActive) {
-        // Gốc 1 luôn là vị trí boss
-        boss->laserStart = boss->position;
+        // Gốc luôn là vị trí của cục boom ở giữa
+        Vector2 startPos = boss->booms[1].position;
+        if (startPos.x == 0.0f && startPos.y == 0.0f) {
+            startPos = (Vector2){ 640.0f, 200.0f };
+        }
+        boss->laserStart = startPos;
 
         if (boss->laserChargeTime > 0) {
             // WARNING phase: laserEnd ĐỨNG YÊN tại vị trí đã lock (set trong StartLaserAttack)
@@ -97,6 +107,7 @@ void DrawLaserAttack(Boss *boss) {
         // ══════════════════════════════════════════════════════════════════
         //  FIRING phase – Evil Mage Laser (fully procedural, red/purple)
         // ══════════════════════════════════════════════════════════════════
+        BeginBlendMode(BLEND_ADDITIVE);
 
         // Fade out in the last 0.5 s
         float alpha = 1.0f;
@@ -137,7 +148,6 @@ void DrawLaserAttack(Boss *boss) {
         // ── 6. Particle sparks along the beam ────────────────────────────
         // Use a deterministic pseudo-random pattern seeded by elapsed so
         // sparks appear to flicker without needing a particle array.
-        BeginBlendMode(BLEND_ADDITIVE);
         int sparkCount = 18;
         for (int i = 0; i < sparkCount; i++) {
             // Distribute sparks along beam length
@@ -160,7 +170,6 @@ void DrawLaserAttack(Boss *boss) {
                 : (Color){180, 30, 255, (unsigned char)(sparkAlpha * 200)};
             DrawCircleV(sp, sparkR, sparkCol);
         }
-        EndBlendMode();
 
         // ── 7. Tip flare at laserEnd ─────────────────────────────────────
         float tipR = 10.0f + pulse * 3.0f;
@@ -168,6 +177,7 @@ void DrawLaserAttack(Boss *boss) {
                     (Color){255, 80, 160, (unsigned char)(alpha * 160)});
         DrawCircleV(boss->laserEnd, tipR * 0.4f,
                     (Color){255, 230, 255, (unsigned char)(alpha * 220)});
+        EndBlendMode();
     }
 }
 

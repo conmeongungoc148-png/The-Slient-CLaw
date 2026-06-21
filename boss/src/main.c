@@ -710,9 +710,8 @@ int main(void) {
         DrawProjectiles(&pm);
         EndMode2D();
 
-        // === UI ===
-        if (boss.state == BOSS_FIGHTING || boss.state == BOSS_DYING || boss.state == BOSS_DEFEATED) {
-            DrawUI(player.hp, boss.hp, boss.maxHp);
+        if (boss.state == BOSS_FIGHTING || boss.state == BOSS_DYING || boss.state == BOSS_DEFEATED || boss.state == BOSS_OUTRO) {
+            DrawUI(player.hp, boss.hp, boss.maxHp, boss.state == BOSS_OUTRO || boss.state == BOSS_DYING || boss.state == BOSS_DEFEATED);
 
             const char *phaseText = "Phase 1";
             if (boss.phase == BOSS_PHASE_2) phaseText = "Phase 2 - Enraged";
@@ -761,7 +760,6 @@ int main(void) {
         if (gameState == STATE_WIN) DrawWinScreen();
         if (gameState == STATE_LOSE) DrawLoseScreen();
 
-        DrawFPS(SCREEN_WIDTH - 90, 10);
         EndTextureMode();
 
         BeginDrawing();
