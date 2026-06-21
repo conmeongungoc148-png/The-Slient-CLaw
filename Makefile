@@ -11,7 +11,7 @@ SRC = src/main.c src/game.c src/camera.c src/map.c src/audio.c src/environment.c
       boss/src/skill/projectile_attack.c boss/src/skill/claw.c boss/src/skill/hazard.c \
       boss/src/skill/laser.c boss/src/skill/rain.c boss/src/skill/slam.c
 OBJ = $(SRC:.c=.o)
-EXE = theforest.exe
+EXE = silentclaw.exe
 
 # Shell detection for cross-platform clean command
 ifeq ($(OS),Windows_NT)
@@ -51,12 +51,4 @@ boss-run:
 boss-clean:
 	$(MAKE) -C boss clean
 
-# Outro Cutscene Only target
-outro: CFLAGS += -DOUTRO_ONLY
-outro: EXE = outro.exe
-outro: all
-
-outro-run: outro
-	./outro.exe
-
-.PHONY: all run clean boss boss-run boss-clean outro outro-run
+.PHONY: all run clean boss boss-run boss-clean
