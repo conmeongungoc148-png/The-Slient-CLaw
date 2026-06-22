@@ -1207,16 +1207,6 @@ void DrawBossSkills(Boss *boss) {
             370, 32, (Color){255, 255, 100, 255});
     }
 
-    // --- Draw Fight Timer (countdown đến atom) ---
-    if (boss->state == BOSS_FIGHTING && boss->fightTimer < ATOM_TRIGGER_TIME) {
-        float remaining = ATOM_TRIGGER_TIME - boss->fightTimer;
-        int mins = (int)(remaining / 60);
-        int secs = (int)remaining % 60;
-        char timerBuf[16];
-        snprintf(timerBuf, sizeof(timerBuf), "%02d:%02d", mins, secs);
-        Color timerColor = (remaining < 30.0f) ? (Color){255, 50, 50, 255} : (Color){255, 255, 100, 200};
-        DrawText(timerBuf, 1280/2 - 30, 90, 24, timerColor);
-    }
 
     // --- Draw Rain Warning Overlay (Upper Screen) ---
     DrawRainAttack(boss);
