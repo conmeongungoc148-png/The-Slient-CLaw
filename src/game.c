@@ -748,12 +748,6 @@ void DrawPlayer(Player *player, Texture2D idle, Texture2D walk, Texture2D run,
   DrawTexturePro(currentTex, source, dest,
                  (Vector2){(float)frameW * scale / 2.0f, (float)frameH * scale},
                  0.0f, WHITE);
-
-  // --- DEBUG HITBOX ---
-  Rectangle hitbox = {player->position.x - player->hitboxWidth / 2.0f,
-                      player->position.y - player->hitboxHeight,
-                      player->hitboxWidth, player->hitboxHeight};
-  DrawRectangleLinesEx(hitbox, 2.0f, RED);
 }
 
 // --- Layer Helpers using cute_tiled ---
